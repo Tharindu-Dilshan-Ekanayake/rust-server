@@ -88,19 +88,44 @@ export const TOWER = Object.freeze({
 add({ type: 'tower', ...TOWER })
 
 /**
- * Ladder trigger volume (feet position). Inside it, W/S climb instead of walk.
- * `exitDir` is the direction you step off at the top.
+ * A fixed ladder up the face of something. `foot` is where its rails stand
+ * (x, z), `dir` the horizontal direction into the structure (and the way you
+ * step off at the top), `topY` the floor it leads to, rungs from `rungs[0]`
+ * every `rungs[1]` metres.
+ *
+ * The climb volume (feet position) sits in front of the rails; inside it W/S
+ * climb instead of walk, and the climber is held at `x, z`, a forearm's
+ * length back from the rungs.
  */
+function ladder(foot, dir, topY, rungs, standoff = 0.12) {
+  const side = [-dir[2], 0, dir[0]]
+  const face = [foot[0] + dir[0] * standoff, foot[1] + dir[2] * standoff]
+  const out = [foot[0] - dir[0] * 0.95, foot[1] - dir[2] * 0.95]
+  const xs = [face[0] + side[0] * 0.6, face[0] - side[0] * 0.6, out[0] + side[0] * 0.6, out[0] - side[0] * 0.6]
+  const zs = [face[1] + side[2] * 0.6, face[1] - side[2] * 0.6, out[1] + side[2] * 0.6, out[1] - side[2] * 0.6]
+  return Object.freeze({
+    min: [Math.min(...xs), -0.2, Math.min(...zs)],
+    max: [Math.max(...xs), topY + 0.4, Math.max(...zs)],
+    topY,
+    exitDir: dir,
+    x: foot[0] - dir[0] * 0.4,
+    z: foot[1] - dir[2] * 0.4,
+    foot,
+    side,
+    rungs,
+  })
+}
+
+const STACK_TOP = 5.2
+
 export const LADDERS = Object.freeze([
-  Object.freeze({
-    min: [-0.6, -0.2, 2.2],
-    max: [0.6, TOWER.platformTop + 0.4, 3.25],
-    topY: TOWER.platformTop,
-    exitDir: [0, 0, -1],
-    x: 0,
-    z: 2.62,
-  }),
+  // Tower: up to the lookout deck, through the gap in its rail.
+  ladder([TOWER.ladderX, TOWER.ladderZ], [0, 0, -1], TOWER.platformTop, [0.3, 0.32], 0.42),
+  // East end of the red/blue stack, and the north side of the white/rust one.
+  ladder([-20.88, 11], [-1, 0, 0], STACK_TOP, [0.3, 0.3]),
+  ladder([-19.4, 23.18], [0, 0, 1], STACK_TOP, [0.3, 0.3]),
 ])
+for (const l of LADDERS.slice(1)) add({ type: 'ladder', foot: l.foot, dir: l.exitDir, topY: l.topY, rungs: l.rungs })
 
 /* ---------------------------------------------------------------------------
  * Tank yard (north-east)
@@ -193,8 +218,9 @@ const containers = [
 ]
 for (const c of containers) add({ type: 'container', ...c })
 // White pressure tanks on cradles behind yellow rails, on top of the two stacks.
-add({ type: 'deckTank', p: [-24, 5.2, 11], rotY: 0, length: 4.2, r: 0.8 })
-add({ type: 'deckTank', p: [-17, 5.2, 24.5], rotY: 0, length: 3.6, r: 0.75 })
+// `gap`: where the deck rail opens for a ladder (side, from, to, in the tank's frame).
+add({ type: 'deckTank', p: [-24, 5.2, 11], rotY: 0, length: 4.2, r: 0.8, gap: { side: 'x+', from: -0.4, to: 0.4 } })
+add({ type: 'deckTank', p: [-17, 5.2, 24.5], rotY: 0, length: 3.6, r: 0.75, gap: { side: 'z-', from: -2.95, to: -1.5 } })
 // Crate "ramp" onto the orange container: ground -> 1.0 -> 2.0 -> 2.6.
 add({ type: 'crate', p: [-19.45, 0, 18.0], size: 1.0, rotY: 0 })
 add({ type: 'crate', p: [-19.45, 1.0, 18.0], size: 1.0, rotY: 0.08 })

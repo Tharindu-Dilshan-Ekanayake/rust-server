@@ -10,7 +10,8 @@
     "test:movement": "node scripts/movement-test.js",
     "test:duel": "node scripts/duel-test.js",
     "test:private": "node scripts/private-test.js",
-    "test:fall": "node scripts/fall-test.js"
+    "test:fall": "node scripts/fall-test.js",
+    "test:arsenal": "node scripts/arsenal-test.js"
   },
   "keywords": [],
   "author": "",

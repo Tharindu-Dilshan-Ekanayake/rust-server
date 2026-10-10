@@ -148,6 +148,123 @@ export const WEAPONS = Object.freeze({
     stats: { damage: 30, fireRate: 96, range: 22, mobility: 92, handling: 85 },
     attachSlots: { optic: ['iron', 'reddot'], muzzle: ['none', 'suppressor'], mag: ['std', 'extended'] },
   },
+  smg: {
+    id: 'smg',
+    name: 'VK-9 Vandal',
+    short: 'VANDAL',
+    kind: 'Submachine Gun',
+    slot: SLOTS.PRIMARY,
+    fireMode: 'auto',
+    damage: { head: 32, chest: 23, body: 22 },
+    falloff: { start: 12, end: 24, minScale: 0.68 },
+    fireInterval: 0.067,
+    magSize: 32,
+    reserve: 128,
+    reloadTime: 1.45,
+    reloadEmptyTime: 1.85,
+    swapTime: 0.38,
+    adsTime: 0.18,
+    adsFov: 62,
+    hipSpread: 0.03,
+    adsSpread: 0.008,
+    moveSpread: 0.018,
+    recoil: { vertical: 0.0085, horizontal: 0.0055, recovery: 9 },
+    moveMultiplier: 1.02,
+    range: 90,
+    stats: { damage: 40, fireRate: 94, range: 35, mobility: 90, handling: 86 },
+    attachSlots: {
+      optic: ['iron', 'reddot', 'holo'],
+      muzzle: ['none', 'suppressor', 'compensator'],
+      mag: ['std', 'extended'],
+    },
+  },
+  shotgun: {
+    id: 'shotgun',
+    name: 'Breacher 12',
+    short: 'BREACHER',
+    kind: 'Shotgun',
+    slot: SLOTS.PRIMARY,
+    fireMode: 'pump',
+    /** Each shot is `pellets` rays in a cone; damage below is per pellet. */
+    pellets: 8,
+    pelletSpread: 0.075,
+    pelletSpreadAds: 0.055,
+    damage: { head: 19, chest: 16, body: 15 },
+    falloff: { start: 7, end: 20, minScale: 0.25 },
+    fireInterval: 0.85,
+    magSize: 6,
+    reserve: 30,
+    /** Loaded a shell at a time: shellStart, then shellTime per shell. */
+    shellStart: 0.3,
+    shellTime: 0.42,
+    reloadTime: 2.8,
+    reloadEmptyTime: 3.2,
+    swapTime: 0.5,
+    adsTime: 0.24,
+    adsFov: 62,
+    hipSpread: 0.0,
+    adsSpread: 0.0,
+    moveSpread: 0.0,
+    recoil: { vertical: 0.06, horizontal: 0.012, recovery: 6 },
+    moveMultiplier: 0.95,
+    range: 45,
+    stats: { damage: 92, fireRate: 18, range: 18, mobility: 76, handling: 64 },
+    attachSlots: { optic: ['iron', 'reddot'], muzzle: ['none', 'suppressor'] },
+  },
+  lmg: {
+    id: 'lmg',
+    name: 'Bulldog LMG',
+    short: 'BULLDOG',
+    kind: 'Light Machine Gun',
+    slot: SLOTS.PRIMARY,
+    fireMode: 'auto',
+    damage: { head: 44, chest: 31, body: 29 },
+    falloff: { start: 25, end: 40, minScale: 0.75 },
+    fireInterval: 0.092,
+    magSize: 100,
+    reserve: 200,
+    reloadTime: 4.6,
+    reloadEmptyTime: 5.2,
+    swapTime: 0.7,
+    adsTime: 0.4,
+    adsFov: 52,
+    hipSpread: 0.05,
+    adsSpread: 0.006,
+    moveSpread: 0.045,
+    recoil: { vertical: 0.012, horizontal: 0.0075, recovery: 6 },
+    moveMultiplier: 0.82,
+    range: 160,
+    stats: { damage: 62, fireRate: 78, range: 70, mobility: 38, handling: 36 },
+    attachSlots: { optic: ['iron', 'reddot', 'holo'], muzzle: ['none', 'compensator'] },
+  },
+  rpg: {
+    id: 'rpg',
+    name: 'Warhead RL',
+    short: 'WARHEAD',
+    kind: 'Rocket Launcher',
+    slot: SLOTS.SECONDARY,
+    fireMode: 'semi',
+    /** Fires a rocket the server flies; it bursts on contact (or at maxFlight). */
+    projectile: { speed: 52, gravity: 2.5, radius: 6.5, damage: 165, maxFlight: 3 },
+    damage: { head: 165, chest: 165, body: 165 },
+    falloff: null,
+    fireInterval: 1.0,
+    magSize: 1,
+    reserve: 2,
+    reloadTime: 2.6,
+    reloadEmptyTime: 2.6,
+    swapTime: 0.75,
+    adsTime: 0.35,
+    adsFov: 55,
+    hipSpread: 0.025,
+    adsSpread: 0.004,
+    moveSpread: 0.02,
+    recoil: { vertical: 0.07, horizontal: 0.012, recovery: 4 },
+    moveMultiplier: 0.88,
+    range: 200,
+    stats: { damage: 100, fireRate: 8, range: 80, mobility: 55, handling: 32 },
+    attachSlots: {},
+  },
   knife: {
     id: 'knife',
     name: 'Combat Knife',
@@ -213,8 +330,20 @@ export const EQUIPMENT = Object.freeze({
 export const THROW_SPEED = 16
 export const THROW_LOFT = 2.2
 
-export const PRIMARY_OPTIONS = Object.freeze(['ar', 'sniper'])
-export const SECONDARY_OPTIONS = Object.freeze(['pistol', 'viper', 'hornet'])
+export const PRIMARY_OPTIONS = Object.freeze(['ar', 'smg', 'shotgun', 'sniper', 'lmg'])
+export const SECONDARY_OPTIONS = Object.freeze(['pistol', 'viper', 'hornet', 'rpg'])
+
+/** Seconds to reload `w` from `mag` rounds (shotguns load shell by shell). */
+/** Seconds a shotgun spends racking the pump after loading from empty. */
+export const PUMP_RACK_TIME = 0.35
+
+/** How many shells a shell-by-shell reload puts in. */
+export const shellsToLoad = (w, mag) => Math.max(1, w.magSize - mag)
+
+export function reloadDuration(w, mag) {
+  if (w.shellTime) return w.shellStart + shellsToLoad(w, mag) * w.shellTime + (mag === 0 ? PUMP_RACK_TIME : 0)
+  return mag === 0 ? w.reloadEmptyTime : w.reloadTime
+}
 export const TACTICAL_OPTIONS = Object.freeze(['flash', 'smoke'])
 
 /* ---------------------------------------------------------------------------
@@ -354,11 +483,11 @@ export const PRESET_CLASSES = Object.freeze([
     preset: true,
   }),
   Object.freeze({
-    id: 'preset-recon',
-    name: 'RECON',
-    primary: 'sniper',
-    primaryAtt: { muzzle: 'none', mag: 'std' },
-    secondary: 'viper',
+    id: 'preset-cqb',
+    name: 'CLOSE QUARTERS',
+    primary: 'smg',
+    primaryAtt: { optic: 'holo', muzzle: 'none', mag: 'std' },
+    secondary: 'pistol',
     secondaryAtt: {},
     tactical: 'smoke',
     preset: true,

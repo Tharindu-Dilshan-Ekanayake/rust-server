@@ -21,7 +21,7 @@ import {
   WALK_GROUPS,
 } from '../shared/constants.js'
 import { chestPoint, headPoint, hitboxFor, rayHitbox, raySphere } from '../shared/hitbox.js'
-import { AMMO_CRATE, KILL_Y, MAP_HALF, MAP_NAME, SPAWNS } from '../shared/map.js'
+import { AMMO_CRATE, KILL_Y, ladderAt, MAP_HALF, MAP_NAME, SPAWNS } from '../shared/map.js'
 import { clamp, dist2, dist3 } from '../shared/math.js'
 import {
   attachmentsFor,
@@ -31,12 +31,14 @@ import {
   EQUIPMENT,
   kitString,
   sanitizeClass,
+  reloadDuration,
   SECONDARY_OPTIONS,
   THROW_LOFT,
   THROW_SPEED,
   WEAPONS,
 } from '../shared/weapons.js'
 import { DustlineState, GrenadeState, PickupState, PlayerState, SmokeState } from './schema.js'
+import { LONGSHOT_DISTANCE, RANKS, XP } from '../shared/progression.js'
 
 const { SELECTING, DEPLOYING, ALIVE, DEAD } = PLAYER_STATES
 
@@ -143,6 +145,8 @@ export class DustlineRoom extends Room {
     this.meta = new Map()
     /** grenade id -> { body, kind, owner, ownerTeam, explodeAt, landedAt, spawnedAt } */
     this.grenadeBodies = new Map()
+    /** rocket id -> { pos, vel, owner, ownerTeam, born, w } */
+    this.rockets = new Map()
     this.pickupExpiry = new Map()
     this.uid = 0
     this.joinCounter = 0
@@ -170,6 +174,7 @@ export class DustlineRoom extends Room {
     p.id = client.sessionId
     p.name = sanitizeName(options?.name)
     p.avatar = sanitizeAvatar(options?.avatar)
+    p.rank = clamp(Math.round(Number(options?.rank) || 1), 1, RANKS.length)
     p.joinedAt = Date.now()
     p.team = this.mode === 'ffa' ? 'ffa' : ''
     p.state = this.mode === 'ffa' ? DEPLOYING : SELECTING
@@ -228,6 +233,45 @@ export class DustlineRoom extends Room {
     return t
   }
 
+  /* -------------------------------------------------------------------------
+   * XP (the client keeps the running total; see shared/progression.js)
+   * ----------------------------------------------------------------------- */
+
+  awardXp(p, amount, why) {
+    if (!p || p.isBot || amount <= 0) return
+    const meta = this.meta.get(p.id)
+    if (!meta) return
+    meta.matchXp = (meta.matchXp ?? 0) + amount
+    meta.client?.send('xp', { n: amount, why })
+  }
+
+  awardKillXp(killer, victim, weaponId, headshot) {
+    if (killer.isBot) return
+    const km = this.meta.get(killer.id)
+    this.awardXp(killer, XP.kill, 'kill')
+    if (headshot) this.awardXp(killer, XP.headshot, 'headshot')
+    if (weaponId === 'knife') this.awardXp(killer, XP.knife, 'knife')
+    if (dist2(killer.x, killer.z, victim.x, victim.z) >= LONGSHOT_DISTANCE && weaponId !== 'frag' && weaponId !== 'rpg') {
+      this.awardXp(killer, XP.longshot, 'longshot')
+    }
+    if (km?.lastKilledBy === victim.id) {
+      km.lastKilledBy = null
+      this.awardXp(killer, XP.revenge, 'revenge')
+    }
+  }
+
+  /** Match-end XP: everyone who took part, more for the winners and the MVP. */
+  awardMatchXp() {
+    const s = this.state
+    for (const p of s.players.values()) {
+      if (p.isBot || p.state === SELECTING) continue
+      this.awardXp(p, XP.matchComplete, 'match')
+      const won = this.mode === 'tdm' ? s.winner === p.team : s.winner === p.id
+      if (won) this.awardXp(p, XP.matchWin, 'win')
+      if (s.mvp === p.id) this.awardXp(p, XP.mvp, 'mvp')
+    }
+  }
+
   /** True while players can fight: the match itself, or a private room's warm-up. */
   inPlay() {
     return this.state.phase === 'playing' || this.state.phase === 'warmup'
@@ -237,6 +281,7 @@ export class DustlineRoom extends Room {
   onStartMatch(_client, p) {
     if (this.state.phase !== 'warmup' || p.id !== this.state.host) return
     for (const id of [...this.grenadeBodies.keys()]) this.removeGrenade(id)
+    this.clearRockets()
     this.state.smokes.clear()
     this.resetMatch()
     this.broadcast('match_start', {})
@@ -293,6 +338,7 @@ export class DustlineRoom extends Room {
     this.onMessage('spawn_request', withPlayer(this.onSpawnRequest))
     this.onMessage('avatar', withPlayer((_c, p, _m, msg) => (p.avatar = sanitizeAvatar(msg))))
     this.onMessage('start_match', withPlayer(this.onStartMatch))
+    this.onMessage('rank', withPlayer((_c, p, _m, msg) => (p.rank = clamp(Math.round(Number(msg.r) || 1), 1, RANKS.length))))
     this.onMessage('pong', withPlayer((_c, p, _m, msg) => {
       if (isNum(msg.t)) p.ping = clamp(Math.round(Date.now() - msg.t), 0, 999)
     }))
@@ -330,7 +376,8 @@ export class DustlineRoom extends Room {
     p.crouch = Boolean(f & 1)
     p.ads = Boolean(f & 2)
     p.sprint = Boolean(f & 4)
-    p.climbing = Boolean(f & 8)
+    // Only believed inside a ladder volume (it also resets fall damage).
+    p.climbing = Boolean(f & 8) && Boolean(ladderAt(p.x, p.y, p.z))
     p.prone = Boolean(f & 16) && !p.climbing
     p.slide = Boolean(f & 32) && !p.prone
     this.trackFall(p, meta)
@@ -390,11 +437,47 @@ export class DustlineRoom extends Room {
     if (!d) return
     if (!o || dist3(o, eye) > 1.8) o = eye
 
+    if (w.projectile) {
+      this.spawnRocket(p, w, o, d, now)
+      this.broadcast('shot', { id: p.id, w: w.id, o, e: o, b: false, q: false }, { except: client })
+      this.noise(p, now, false)
+      return
+    }
+
     let e = vec3(msg.e)
     if (!e || dist3(o, e) > w.range) e = [o[0] + d[0] * 60, o[1] + d[1] * 60, o[2] + d[2] * 60]
-    const hit = typeof msg.h === 'string' && this.resolveHit(p, w, o, d, msg.h, msg.z, now)
-    // `b`: the shot drew blood (hit puff instead of dust); `q`: suppressed.
-    this.broadcast('shot', { id: p.id, w: w.id, o, e, b: hit, q: w.quiet }, { except: client })
+    let hit = false
+    let ends
+    if (w.pellets) {
+      // Every pellet is checked like a bullet; damage per target is summed so a
+      // point-blank blast lands as one hit (one hitmarker, one kill).
+      const totals = new Map()
+      ends = []
+      const list = Array.isArray(msg.pl) ? msg.pl.slice(0, w.pellets) : []
+      const maxCone = Math.max(w.pelletSpread, w.pelletSpreadAds) * 1.6 + 0.02
+      for (const pl of list) {
+        const pd = unit3(pl?.d)
+        if (!pd || Math.acos(Math.min(1, pd[0] * d[0] + pd[1] * d[1] + pd[2] * d[2])) > maxCone) continue
+        const pe = vec3(pl.e)
+        if (pe && dist3(o, pe) <= w.range) ends.push(pe.map((v) => Math.round(v * 100) / 100))
+        if (typeof pl.h !== 'string') continue
+        const r = this.evaluateHit(p, w, o, pd, pl.h, pl.z, now)
+        if (!r) continue
+        const t = totals.get(r.target) ?? { dmg: 0, headshot: false }
+        t.dmg += r.dmg
+        t.headshot ||= r.headshot
+        totals.set(r.target, t)
+      }
+      for (const [target, t] of totals) {
+        this.applyDamage(target, t.dmg, p, w.id, { headshot: t.headshot, from: [p.x, p.z] })
+        hit = true
+      }
+    } else {
+      hit = typeof msg.h === 'string' && this.resolveHit(p, w, o, d, msg.h, msg.z, now)
+    }
+    // `b`: the shot drew blood (hit puff instead of dust); `q`: suppressed;
+    // `es`: where each shotgun pellet ended up.
+    this.broadcast('shot', { id: p.id, w: w.id, o, e, b: hit, q: w.quiet, ...(ends && { es: ends }) }, { except: client })
     this.noise(p, now, w.quiet)
   }
 
@@ -409,10 +492,18 @@ export class DustlineRoom extends Room {
   }
 
   resolveHit(shooter, w, o, d, targetId, zoneClaim, now) {
+    const r = this.evaluateHit(shooter, w, o, d, targetId, zoneClaim, now)
+    if (!r) return false
+    this.applyDamage(r.target, r.dmg, shooter, w.id, { headshot: r.headshot, from: [shooter.x, shooter.z] })
+    return true
+  }
+
+  /** Validates one claimed bullet hit; returns { target, dmg, headshot } or null. */
+  evaluateHit(shooter, w, o, d, targetId, zoneClaim, now) {
     const target = this.state.players.get(targetId)
-    if (!target || target === shooter || target.state !== ALIVE || !this.isEnemy(shooter, target)) return false
+    if (!target || target === shooter || target.state !== ALIVE || !this.isEnemy(shooter, target)) return null
     const tm = this.meta.get(target.id)
-    if (!tm || now < tm.protectedUntil) return false
+    if (!tm || now < tm.protectedUntil) return null
 
     // The shooter saw the target ~100 ms+ in the past; accept a hit against any
     // recent position, with a little slack on the hitbox.
@@ -422,7 +513,7 @@ export class DustlineRoom extends Room {
       const r = rayHitbox(o, d, hitboxFor(s.x, s.y, s.z, s.c, s.w), 0.3)
       if (r && (!best || r.t < best.t)) best = r
     }
-    if (!best || best.t > w.range) return false
+    if (!best || best.t > w.range) return null
 
     let zone = ['head', 'chest', 'body'].includes(zoneClaim) ? zoneClaim : best.zone
     if (zone === 'head') {
@@ -431,11 +522,64 @@ export class DustlineRoom extends Room {
     }
 
     const wall = this.mapWorld.raycast(o, d, best.t)
-    if (wall !== null && wall < best.t - 0.35) return false
+    if (wall !== null && wall < best.t - 0.35) return null
 
-    const dmg = damageAt(w.id, zone, best.t, w.att)
-    this.applyDamage(target, dmg, shooter, w.id, { headshot: zone === 'head', from: [shooter.x, shooter.z] })
-    return true
+    return { target, dmg: damageAt(w.id, zone, best.t, w.att), headshot: zone === 'head' }
+  }
+
+  /** Launches a rocket: flown in tickRockets, burst on whatever it meets. */
+  spawnRocket(p, w, o, d, now) {
+    const start = [o[0] + d[0] * 0.7, o[1] + d[1] * 0.7, o[2] + d[2] * 0.7]
+    const id = `r${++this.uid}`
+    const g = new GrenadeState()
+    g.id = id
+    g.kind = 'rocket'
+    g.owner = p.id
+    g.x = start[0]
+    g.y = start[1]
+    g.z = start[2]
+    this.state.grenades.set(id, g)
+    const v = w.projectile.speed
+    this.rockets.set(id, { pos: start, vel: [d[0] * v, d[1] * v, d[2] * v], owner: p.id, ownerTeam: p.team, born: now, w })
+  }
+
+  clearRockets() {
+    for (const id of this.rockets.keys()) this.state.grenades.delete(id)
+    this.rockets.clear()
+  }
+
+  tickRockets(dt, now) {
+    for (const [id, r] of this.rockets) {
+      r.vel[1] -= r.w.projectile.gravity * dt
+      const step = [r.vel[0] * dt, r.vel[1] * dt, r.vel[2] * dt]
+      const len = Math.hypot(...step)
+      const dir = [step[0] / len, step[1] / len, step[2] / len]
+      // First thing along this tick's path: map geometry or a player.
+      let t = this.mapWorld.raycast(r.pos, dir, len)
+      t = t === null ? Infinity : t
+      for (const victim of this.state.players.values()) {
+        if (victim.state !== ALIVE || victim.id === r.owner || now - r.born < 60) continue
+        const h = rayHitbox(r.pos, dir, hitboxFor(victim.x, victim.y, victim.z, stanceOf(victim), victim.yaw), 0.15)
+        if (h && h.t < t) t = h.t
+      }
+      const expired = now - r.born > r.w.projectile.maxFlight * 1000 || r.pos[1] < KILL_Y
+      if (t <= len || expired) {
+        const at = t <= len ? [r.pos[0] + dir[0] * t, r.pos[1] + dir[1] * t, r.pos[2] + dir[2] * t] : r.pos
+        // Pull the burst back off the wall a touch so cover doesn't eat it all.
+        const burst = [at[0] - dir[0] * 0.25, at[1] - dir[1] * 0.25, at[2] - dir[2] * 0.25]
+        this.rockets.delete(id)
+        this.state.grenades.delete(id)
+        this.detonate({ kind: 'rocket', owner: r.owner, ownerTeam: r.ownerTeam }, burst)
+        continue
+      }
+      r.pos = [r.pos[0] + step[0], r.pos[1] + step[1], r.pos[2] + step[2]]
+      const g = this.state.grenades.get(id)
+      if (g) {
+        g.x = r.pos[0]
+        g.y = r.pos[1]
+        g.z = r.pos[2]
+      }
+    }
   }
 
   onSwitch(_client, p, meta, msg) {
@@ -456,7 +600,7 @@ export class DustlineRoom extends Room {
     if (!ammo || ammo.mag >= w.magSize || ammo.reserve <= 0 || meta.reloadUntil > now) return
     // A touch faster than the client so a shot fired right as the client's reload
     // ends is never rejected.
-    const ms = (ammo.mag === 0 ? w.reloadEmptyTime : w.reloadTime) * 1000 * 0.85
+    const ms = reloadDuration(w, ammo.mag) * 1000 * 0.85
     meta.reloadUntil = now + ms
     this.broadcast('act', { id: p.id, a: 'reload', d: Math.round(ms / 0.85), w: w.id, e: ammo.mag === 0 }, { except: _client })
     meta.reloadTimer = this.clock.setTimeout(() => {
@@ -648,13 +792,15 @@ export class DustlineRoom extends Room {
     p.id = `bot_${++this.uid}`
     p.name = name
     p.isBot = true
+    // Bots wear a plausible spread of ranks on the scoreboard.
+    p.rank = 1 + Math.floor(Math.random() * 12)
     p.team = team
     p.joinedAt = Date.now()
     p.state = DEAD
     const meta = this.createMeta(p, null)
     meta.bot = createBotBrain()
     const pick = (list) => list[Math.floor(Math.random() * list.length)]
-    const primary = Math.random() < 0.75 ? 'ar' : 'sniper'
+    const primary = pick(['ar', 'ar', 'smg', 'smg', 'lmg', 'sniper'])
     meta.activeClass = sanitizeClass({
       name: 'BOT',
       primary,
@@ -662,7 +808,7 @@ export class DustlineRoom extends Room {
         optic: pick(WEAPONS[primary].attachSlots.optic ?? ['']),
         muzzle: pick(WEAPONS[primary].attachSlots.muzzle ?? ['']),
       },
-      secondary: pick(SECONDARY_OPTIONS),
+      secondary: pick(SECONDARY_OPTIONS.filter((id) => id !== 'rpg')),
       tactical: Math.random() < 0.5 ? 'flash' : 'smoke',
     })
     meta.respawnAt = Date.now() + 300 + Math.random() * 1500
@@ -813,6 +959,8 @@ export class DustlineRoom extends Room {
 
     const credited = killer && killer !== victim && this.isEnemy(killer, victim)
     if (credited) {
+      this.awardKillXp(killer, victim, weaponId, headshot)
+      vm.lastKilledBy = killer.id
       killer.kills += 1
       if (this.mode === 'tdm') {
         if (killer.team === TEAMS.ALPHA) this.state.scoreAlpha += 1
@@ -903,10 +1051,11 @@ export class DustlineRoom extends Room {
       this.flashBots(pos)
       return
     }
-    if (gd.kind !== 'frag') return
-    this.broadcast('explosion', { k: 'frag', p: pos })
+    if (gd.kind !== 'frag' && gd.kind !== 'rocket') return
+    this.broadcast('explosion', { k: gd.kind, p: pos })
     const owner = this.state.players.get(gd.owner) ?? null
-    const { radius, damage } = EQUIPMENT.frag
+    const { radius, damage } = gd.kind === 'rocket' ? WEAPONS.rpg.projectile : EQUIPMENT.frag
+    const weaponId = gd.kind === 'rocket' ? 'rpg' : 'frag'
     const lift = [pos[0], pos[1] + 0.25, pos[2]]
     for (const victim of this.state.players.values()) {
       if (victim.state !== ALIVE) continue
@@ -921,7 +1070,9 @@ export class DustlineRoom extends Room {
         this.mapWorld.clearLine(lift, headPoint(victim.x, victim.y, victim.z, stanceOf(victim), victim.yaw), 0.1) ||
         this.mapWorld.clearLine(lift, [victim.x, victim.y + 0.3, victim.z], 0.1)
       if (!exposed) continue
-      this.applyDamage(victim, damage * (1 - d / radius), owner, 'frag', { from: [pos[0], pos[2]] })
+      // Your own rocket still hurts, but a near miss on a wall shouldn't one-shot you.
+      const scale = self && gd.kind === 'rocket' ? 0.5 : 1
+      this.applyDamage(victim, damage * (1 - d / radius) * scale, owner, weaponId, { from: [pos[0], pos[2]] })
     }
   }
 
@@ -1081,6 +1232,7 @@ export class DustlineRoom extends Room {
     const now = Date.now()
     this.mapWorld.step(dt)
     this.tickGrenades(now)
+    this.tickRockets(dt, now)
     const playing = this.inPlay()
 
     for (const p of this.state.players.values()) {
@@ -1117,6 +1269,12 @@ export class DustlineRoom extends Room {
   everySecond() {
     const now = Date.now()
     if (this.state.phase === 'playing') {
+      for (const p of this.state.players.values()) {
+        if (p.isBot || p.state === SELECTING) continue
+        const meta = this.meta.get(p.id)
+        meta.matchSeconds = (meta.matchSeconds ?? 0) + 1
+        if (meta.matchSeconds % 60 === 0) this.awardXp(p, XP.minute, 'time')
+      }
       this.state.timeLeft = Math.max(0, this.state.timeLeft - 1)
       if (this.state.timeLeft === 0) this.endMatch()
     } else if (this.state.phase === 'ended') {
@@ -1170,8 +1328,10 @@ export class DustlineRoom extends Room {
     }
     s.mvp = ranking[0]?.id ?? ''
     for (const id of [...this.grenadeBodies.keys()]) this.removeGrenade(id)
+    this.clearRockets()
     s.smokes.clear()
     for (const meta of this.meta.values()) this.cancelReload(meta)
+    this.awardMatchXp()
     this.broadcast('match_end', { winner: s.winner, mvp: s.mvp })
   }
 
@@ -1187,6 +1347,11 @@ export class DustlineRoom extends Room {
     for (const p of s.players.values()) {
       p.kills = 0
       p.deaths = 0
+      const meta = this.meta.get(p.id)
+      if (meta) {
+        meta.matchSeconds = 0
+        meta.matchXp = 0
+      }
     }
 
     // Re-balance humans before the new match: newest joiners move first.

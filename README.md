@@ -44,6 +44,14 @@ Movement is client-predicted; everything that matters is decided here:
   attachment combos (`attachSlots` per weapon). Attachment effects (mag size,
   falloff range, recoil, quiet shots) come from `effectiveWeapon()`, used by both
   sides. A class change while alive waits for the next spawn.
+- **Shotgun pellets**: a blast carries each pellet's direction and claimed hit;
+  every pellet is checked like a bullet (and must sit inside the gun's spread
+  cone), and the damage per target is summed into one hit.
+- **Rockets** (the Warhead RL) are flown here (`tickRockets`: speed, a little
+  drop, 3 s max flight) and burst on the first wall or player they meet, with the
+  same splash rules as a frag (your own rocket hurts you at half strength).
+- **Ladders**: a player's climbing flag only counts inside one of the
+  `LADDERS` volumes in `shared/map.js` (it also resets fall damage).
 - **Teams**: you can't join a team that would end up 2+ humans bigger; auto-assign
   picks the smaller team, then the lower score, then random. If a leaver leaves the
   teams 2+ apart, the newest player on the bigger team is moved at their next death.
@@ -59,15 +67,23 @@ the host (`state.host`) sends `start_match` to reset scores and start the clock.
 
 Client → server: `choose_team {team|'auto'}`, `set_class {classData}`,
 `spawn_request {classData?}`, `m` (movement + stance flags: crouch, ADS, sprint, climb, prone, slide; 20 Hz), `fire`, `sw` (switch),
-`rl` (reload), `ml` (melee), `th` (throw), `avatar`, `pong`.
+`rl` (reload), `ml` (melee), `th` (throw), `avatar`, `rank {r}`, `pong`.
 
 Server → client: `welcome`, `team_select`, `team_assigned`, `team_denied`,
 `team_moved`, `spawn {p, yaw, classData, ammo}`, `correct`, `shot`, `hit`,
 `damaged`, `kill`, `melee`, `explosion`, `flash`, `ammo`, `class_ack`,
-`match_end`, `match_reset`, `act` (another player reloading or throwing, for their animation), `ping`. Room state replaces a `room_state` message.
+`match_end`, `match_reset`, `xp {n, why}`, `act` (another player reloading or throwing, for their animation), `ping`. Room state replaces a `room_state` message.
 A `shot` carries `q: true` when suppressed (clients play it quietly and skip the
 minimap ping), and each player's `kit` string in state lists their weapons and
 attachments so others render the right guns.
+
+## Ranks and XP
+
+`shared/progression.js` holds the 16 ranks (Private → General) and the XP table;
+every weapon is open to everyone. The server awards XP as it happens (`xp`
+message: kill, headshot, knife, longshot, revenge, every minute played, match
+complete, win, MVP); the client keeps the running total and reports its rank
+(join option `rank`, then `rank` messages) so scoreboards can show insignia.
 
 ## Tests
 
@@ -77,4 +93,5 @@ npm run test:movement   # walks scripted routes with the client's character cont
 npm run test:duel       # two clients: movement validation, noclip guard, hit validation
 npm run test:private    # private rooms: keys, join by key, caps, bots on/off
 npm run test:fall       # fall damage: hops/stairs free, 5 m landing hurts, tower kills
+npm run test:arsenal    # rocket kill credited to the launcher, shotgun pellets = one hit, kill XP
 ```
