@@ -1,20 +1,30 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Dustline Pumpstation game server (Colyseus)",
+  "main": "src/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon --watch src src/server.js",
+    "test:bots": "node scripts/smoke-test.js",
+    "test:movement": "node scripts/movement-test.js",
+    "test:duel": "node scripts/duel-test.js",
+    "test:private": "node scripts/private-test.js",
+    "test:fall": "node scripts/fall-test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
+    "@colyseus/schema": "^5.0.36",
+    "@dimforge/rapier3d-compat": "^0.19.2",
+    "colyseus": "^0.18.9",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "nodemon": "^3.1.14"
+  },
+  "devDependencies": {
+    "@colyseus/sdk": "^0.18.5"
   }
 }
