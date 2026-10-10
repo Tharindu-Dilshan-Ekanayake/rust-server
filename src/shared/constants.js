@@ -56,8 +56,9 @@ export const PLAYER = Object.freeze({
   slideTime: 0.75,
   slideCooldown: 0.9,
   adsMultiplier: 0.65,
-  jumpVelocity: 7.4,
-  gravity: 20,
+  /** About 1.08 m of clearance (v² / 2g): onto a crate, not onto a container or a roof. */
+  jumpVelocity: 7.2,
+  gravity: 24,
   climbSpeed: 3.2,
   maxHealth: 100,
   regenDelay: 4,
