@@ -37,6 +37,8 @@ export const PlayerState = schema(
     climbing: t.boolean().default(false),
     /** Bumped on every spawn so clients can snap instead of interpolating a teleport. */
     spawnSeq: t.uint16().default(0),
+    /** Rank number (1-based) the client reports, for insignia on scoreboards. */
+    rank: t.uint8().default(1),
     /** JSON: { equipped, proportions } from the player's Bloxity avatar. */
     avatar: t.string().default(''),
     joinedAt: t.float64().default(0),

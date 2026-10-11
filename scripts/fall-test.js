@@ -91,21 +91,24 @@ await wait(200)
 check(`hop on flat ground is free (hp ${me().hp})`, me().hp === 100 && log.fell.length === 0)
 
 // 2) Walk to the stairs, up to the 5 m landing, back down the stairs: still free.
-const bottom = [STAIRS.bottom[0], 0, STAIRS.bottom[2] + 0.9]
+// Which way the stairs climb along z.
+const up = Math.sign(STAIRS.top[2] - STAIRS.bottom[2])
+const bottom = [STAIRS.bottom[0], 0, STAIRS.bottom[2] - 0.9 * up]
 const path = findPath(graph, nearestNode(graph, world, pos), nearestNode(graph, world, bottom))
 for (const i of path) await walkTo(graph.nodes[i])
 await walkTo(bottom)
-const landing = [STAIRS.top[0], STAIRS.top[1], STAIRS.top[2] - 0.6]
+const landing = [STAIRS.top[0], STAIRS.top[1], STAIRS.top[2] + 0.6 * up]
 await walkTo(landing)
 await walkTo(bottom)
 await wait(200)
 check(`walking down the stairs is free (hp ${me().hp}, corrections ${log.corrections})`, me().hp === 100 && log.fell.length === 0)
 
-// 3) Back up, then step off the landing's west edge: hurts, doesn't kill.
+// 3) Back up, then step off the landing's open side (the other is the tank): hurts, doesn't kill.
 await walkTo(landing)
-await walkTo([landing[0] - 0.9, landing[1], landing[2]])
-const ground = world.groundY(landing[0] - 2.2, 4.5, landing[2]) ?? 0
-await fallTo(ground, -1.3, 0)
+const side = [-1, 1].find((s) => (world.groundY(landing[0] + s * 2.2, 4.5, landing[2]) ?? 0) < 0.5) ?? -1
+await walkTo([landing[0] + side * 0.9, landing[1], landing[2]])
+const ground = world.groundY(landing[0] + side * 2.2, 4.5, landing[2]) ?? 0
+await fallTo(ground, side * 1.3, 0)
 await wait(250)
 const expect = fallDamage(landing[1] - ground)
 check(
@@ -113,14 +116,16 @@ check(
   log.fell.length === 1 && me().hp < 100 && me().hp > 0,
 )
 
-// 4) Up the tower ladder and off the top: lethal, and credited to the fall.
-const towerPath = findPath(graph, nearestNode(graph, world, pos), nearestNode(graph, world, [TOWER.ladderX, 0, TOWER.ladderZ + 1.5]))
+// 4) Up the derrick ladder and off the top: lethal, and credited to the fall.
+const tx = TOWER.p[0] + TOWER.ladderX
+const tz = TOWER.p[2]
+const towerPath = findPath(graph, nearestNode(graph, world, pos), nearestNode(graph, world, [tx, 0, tz + TOWER.ladderZ + 1.5]))
 for (const i of towerPath) await walkTo(graph.nodes[i])
-await walkTo([TOWER.ladderX, 0, TOWER.ladderZ + 0.02])
-await walkTo([TOWER.ladderX, TOWER.platformTop + 0.03, TOWER.ladderZ + 0.02], 8)
-await walkTo([TOWER.ladderX, TOWER.platformTop + 0.03, 1.4])
-await walkTo([TOWER.ladderX, TOWER.platformTop + 1.2, -1.9])
-await walkTo([TOWER.ladderX, TOWER.platformTop + 1.2, -2.9])
+await walkTo([tx, 0, tz + TOWER.ladderZ + 0.3])
+await walkTo([tx, TOWER.platformTop + 0.03, tz + TOWER.ladderZ + 0.3], 8)
+await walkTo([tx, TOWER.platformTop + 0.03, tz + 1.4])
+await walkTo([tx, TOWER.platformTop + 1.2, tz - 1.9])
+await walkTo([tx, TOWER.platformTop + 1.2, tz - 2.9])
 await fallTo(0.03, 0, -1.2)
 await wait(300)
 const fallKill = log.kills.find((k) => k.v === room.sessionId)

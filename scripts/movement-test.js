@@ -10,7 +10,7 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 
 import { interactionGroups, PLAYER, PLAYER_GROUPS } from '../src/shared/constants.js'
-import { buildColliders, ladderAt } from '../src/shared/map.js'
+import { buildColliders, ladderAt, LADDERS } from '../src/shared/map.js'
 
 await RAPIER.init({})
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
@@ -105,15 +105,21 @@ const E = -Math.PI / 2 // facing east (+X)
 const S = Math.PI // facing south (+Z)
 const yawTo = (from, to) => Math.atan2(-(to[0] - from[0]), -(to[1] - from[1]))
 
-run('ladder to tower top', [0, 0, 3.7], [[0, 1, 2], [0, 1, 3.5], [0, 1, 0.6]])
-run('stairs to landing', [9.2, 0, -8.6], [[0, 1, 1], [0, 1, 1.5], [0, 1, 1]])
-run('landing to tank tops', [9.55, 5, -19], [[E, 1, 1], [E, 1, 1.4]])
-run('tank gap (flank)', [16.6, 0, -25], [[S, 1, 2.6]])
-run('under the pipeline', [-6, 0, -10], [[-Math.PI / 4, 1, 1.5], [-Math.PI / 4, 1, 1.5]])
+run('ladder to derrick top', [LADDERS[0].x, 0, LADDERS[0].z + 0.8], [[0, 1, 2], [0, 1, 3.5], [0, 1, 0.6]])
+run('stairs to landing', [-15.2, 0, 16.4], [[S, 1, 1], [S, 1, 1.5], [S, 1, 0.5]])
+run('landing to tank tops', [-15.55, 5, 25.5], [[W, 1, 1], [W, 1, 1.4]])
+run('tank gap (flank)', [-22.6, 0, 19.5], [[S, 1, 2.6]])
+run('under the pipeline', [11.5, 0, -23.5], [[0, 1, 0.8], [0, 1, 0.8]])
+run('up the fallen pipe', [-10.6, 0, -26.95], [[E, 1, 1.2], [E, 1, 1.2], [E, 1, 1.0]])
+run('conveyor to deck', [-15.5, 0, 2], [[E, 1, 1.5], [E, 1, 1.5], [E, 1, 0.6]])
+run('ladder to refinery deck', [7.0, 0, 2.4], [[W, 1, 0.6], [W, 1, 1.6]])
+run('ladder to tank platform', [3.2, 3.6, 2.3], [[0, 1, 0.6], [0, 1, 1.8]])
+run('ladder to process tower', [0.8, 6.6, -1.9], [[W, 1, 0.6], [W, 1, 2.4]])
+run('into the hall', [-2.8, 0, 6], [[0, 1, 1.0], [0, 1, 0.6]])
 run('west house upstairs', [-15.4, 0, 0.75], [[W, 1, 1.6], [W, 1, 0.4], [0, 1, 0.6], [W, 1, 0.5]])
 run('outpost roof ramp', [0.4, 0, -23], [[W, 1, 0.8], [W, 1, 0.9]])
 run('south block roof', [1.0, 0, 14.4], [[S, 1, 1.0], [S, 1, 0.8], [S, 1, 0.5]])
-run('open container walk', [-14, 0, 10], [[S, 1, 2]])
+run('open container walk', [-11.5, 0, 9], [[S, 1, 2]])
 run('shack door', [15.5, 0, 22], [[E, 1, 1.5]])
 run('crates onto container', [-17.6, 0, 19.8], [
   [yawTo([-17.6, 19.8], [-18.45, 19.0]), 1, 0.3, 0.02], [0, 0, 0.6],
@@ -125,3 +131,5 @@ run('crates onto shack roof', [19.2, 0, 15.4], [
   [yawTo([19.9, 17.1], [21.25, 18.2]), 1, 0.3, 0.02], [0, 0, 0.6],
   [S, 1, 0.35, 0.02], [S, 1, 0.6],
 ])
+run('refinery south stairs', [2.6, 0, 11], [[0, 1, 1.2], [0, 1, 1.0], [0, 1, 0.6]])
+run('round the tanker', [-14, 0, -6], [[E, 1, 1.0], [-Math.PI / 4, 1, 1.4]])
