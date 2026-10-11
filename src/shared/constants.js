@@ -7,6 +7,11 @@
 
 export const ROOM_NAME = 'dustline'
 export const MAX_PLAYERS = 8
+/**
+ * Close code a server sends when it is going away (a deploy or scale-down):
+ * the client asks the matchmaker for a new server and rejoins.
+ */
+export const SERVER_MOVING_CODE = 4100
 /** Length of private-room join keys. */
 export const ROOM_CODE_LENGTH = 6
 

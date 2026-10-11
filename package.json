@@ -1,7 +1,7 @@
 {
-  "name": "server",
+  "name": "modern-guns-server",
   "version": "1.0.0",
-  "description": "Dustline Pumpstation game server (Colyseus)",
+  "description": "Modern Guns game server (Colyseus)",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -11,7 +11,8 @@
     "test:duel": "node scripts/duel-test.js",
     "test:private": "node scripts/private-test.js",
     "test:fall": "node scripts/fall-test.js",
-    "test:arsenal": "node scripts/arsenal-test.js"
+    "test:arsenal": "node scripts/arsenal-test.js",
+    "test:drain": "node scripts/drain-test.js"
   },
   "keywords": [],
   "author": "",
@@ -22,10 +23,13 @@
     "@dimforge/rapier3d-compat": "^0.19.2",
     "colyseus": "^0.18.9",
     "cors": "^2.8.6",
-    "express": "^5.2.1",
-    "nodemon": "^3.1.14"
+    "express": "^5.2.1"
   },
   "devDependencies": {
-    "@colyseus/sdk": "^0.18.5"
+    "@colyseus/sdk": "^0.18.5",
+    "nodemon": "^3.1.14"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

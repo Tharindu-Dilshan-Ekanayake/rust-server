@@ -494,6 +494,28 @@ export const PRESET_CLASSES = Object.freeze([
   }),
 ])
 
+/**
+ * Primary attachments bots carry, per weapon. A fixed list rather than random
+ * picks, so the client can build every one of these guns while the map loads:
+ * building a new gun + attachment combination mid-match is a visible hitch.
+ */
+export const BOT_KITS = Object.freeze({
+  ar: [
+    { optic: 'reddot', muzzle: 'none' },
+    { optic: 'holo', muzzle: 'suppressor' },
+    { optic: 'iron', muzzle: 'compensator' },
+  ],
+  smg: [
+    { optic: 'holo', muzzle: 'none' },
+    { optic: 'reddot', muzzle: 'suppressor' },
+  ],
+  lmg: [
+    { optic: 'reddot', muzzle: 'none' },
+    { optic: 'holo', muzzle: 'compensator' },
+  ],
+  sniper: [{ muzzle: 'none' }, { muzzle: 'suppressor' }],
+})
+
 export const CUSTOM_CLASS_COUNT = 5
 export const CLASS_NAME_MAX = 16
 

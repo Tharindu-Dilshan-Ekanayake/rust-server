@@ -2,6 +2,7 @@ import { Room } from 'colyseus'
 
 import { botHearNoise, BOT_NAMES, createBotBrain, resetBotBrain, tickBot } from '../game/bots.js'
 import { getNavGraph, MapWorld } from '../game/physics.js'
+import { liveRooms } from '../game/stats.js'
 import {
   eyeHeightFor,
   MATCH_END_DURATION,
@@ -12,6 +13,7 @@ import {
   PATCH_RATE_MS,
   ROOM_CODE_LENGTH,
   PLAYER,
+  SERVER_MOVING_CODE,
   PLAYER_STATES,
   RESPAWN_DELAY,
   SPAWN_PROTECTION,
@@ -25,6 +27,7 @@ import { AMMO_CRATE, KILL_Y, ladderAt, MAP_HALF, MAP_NAME, SPAWNS } from '../sha
 import { clamp, dist2, dist3 } from '../shared/math.js'
 import {
   attachmentsFor,
+  BOT_KITS,
   damageAt,
   DEFAULT_CLASS,
   effectiveWeapon,
@@ -99,6 +102,15 @@ function newRoomCode() {
   }
 }
 
+/**
+ * Draining (production only; locally Ctrl+C should stop the server at once).
+ * Legion waits up to 10 minutes after SIGTERM, so a running match is cut to
+ * DRAIN_MATCH_SECONDS and everyone is moved on by DRAIN_LIMIT_MS at the latest.
+ */
+const DRAIN = process.env.NODE_ENV === 'production'
+const DRAIN_MATCH_SECONDS = 7 * 60
+const DRAIN_LIMIT_MS = 9 * 60 * 1000
+
 export class DustlineRoom extends Room {
   maxClients = MAX_PLAYERS
   patchRate = PATCH_RATE_MS
@@ -152,6 +164,8 @@ export class DustlineRoom extends Room {
     this.joinCounter = 0
     this.botNameCursor = Math.floor(Math.random() * BOT_NAMES.length)
 
+    this.draining = false
+    liveRooms.add(this)
     this.setMetadata({ mode: this.mode, map: MAP_NAME, private: this.isPrivate })
     this.registerMessages()
     this.setTimestep((dtMs) => this.tick(dtMs), 1000 / 30)
@@ -161,8 +175,45 @@ export class DustlineRoom extends Room {
   }
 
   onDispose() {
+    liveRooms.delete(this)
     if (this.roomCode) activeCodes.delete(this.roomCode)
     this.mapWorld?.dispose()
+  }
+
+  botCount() {
+    let n = 0
+    for (const p of this.state.players.values()) if (p.isBot) n++
+    return n
+  }
+
+  /**
+   * The server is shutting down (a deploy). The room is already locked, so
+   * nobody new arrives. A match in progress plays out (its clock cut to fit the
+   * drain window) and its players move on after the results; anyone not mid-match
+   * moves on now. Moving = closing with SERVER_MOVING_CODE, which makes clients
+   * ask the matchmaker for a fresh server and rejoin there.
+   */
+  onBeforeShutdown() {
+    if (!DRAIN) return super.onBeforeShutdown()
+    if (this.draining) return
+    this.draining = true
+    this.clock.setTimeout(() => this.moveOn(), DRAIN_LIMIT_MS)
+    const s = this.state
+    const fighting = [...s.players.values()].some((p) => !p.isBot && p.state !== SELECTING)
+    if (s.phase === 'playing' && fighting) {
+      s.timeLeft = Math.min(s.timeLeft, DRAIN_MATCH_SECONDS)
+      this.broadcast('notice', { text: 'SERVER UPDATE — LAST MATCH HERE, THEN YOU MOVE TO A NEW SERVER', ms: 6000 })
+      console.log(`[drain] ${this.roomId}: finishing the match (${s.timeLeft}s left)`)
+    } else {
+      console.log(`[drain] ${this.roomId}: ${s.phase}, moving players on now`)
+      this.moveOn()
+    }
+  }
+
+  moveOn() {
+    if (this.movedOn) return
+    this.movedOn = true
+    this.disconnect(SERVER_MOVING_CODE).catch(() => {})
   }
 
   /* -------------------------------------------------------------------------
@@ -804,10 +855,7 @@ export class DustlineRoom extends Room {
     meta.activeClass = sanitizeClass({
       name: 'BOT',
       primary,
-      primaryAtt: {
-        optic: pick(WEAPONS[primary].attachSlots.optic ?? ['']),
-        muzzle: pick(WEAPONS[primary].attachSlots.muzzle ?? ['']),
-      },
+      primaryAtt: { ...pick(BOT_KITS[primary]) },
       secondary: pick(SECONDARY_OPTIONS.filter((id) => id !== 'rpg')),
       tactical: Math.random() < 0.5 ? 'flash' : 'smoke',
     })
@@ -1279,7 +1327,11 @@ export class DustlineRoom extends Room {
       if (this.state.timeLeft === 0) this.endMatch()
     } else if (this.state.phase === 'ended') {
       this.state.restartIn = Math.max(0, this.state.restartIn - 1)
-      if (this.state.restartIn === 0) this.resetMatch()
+      // Draining: no next match here; the results were shown, now move on.
+      if (this.state.restartIn === 0) {
+        if (this.draining) this.moveOn()
+        else this.resetMatch()
+      }
     }
     for (const [id, at] of this.pickupExpiry) {
       if (now >= at) {
