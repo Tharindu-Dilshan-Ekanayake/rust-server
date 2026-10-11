@@ -50,7 +50,11 @@ const HISTORY_MS = 450
 const PICKUP_TTL_MS = 25000
 const MAX_PICKUPS = 10
 
-const EQUIP_KEYS = ['hatId', 'backId', 'skinId', 'headId', 'armLId', 'armRId', 'legLId', 'legRId', 'torsoId']
+const EQUIP_KEYS = [
+  'hatId', 'backId', 'skinId', 'headId', 'armLId', 'armRId', 'legLId', 'legRId', 'torsoId',
+  // Clothing (drawn onto the skin texture) and accessories, so others see them too.
+  'hairId', 'maskId', 'neckId', 'chestId', 'waistId', 'handId', 'shoesId', 'faceId', 'pantsId', 'shirtId',
+]
 const PROPORTION_KEYS = ['height', 'shoulderWidth', 'armLength', 'legOffsetX', 'torsoScaleX', 'neckHeight', 'headScale']
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v)
