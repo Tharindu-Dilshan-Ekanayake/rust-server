@@ -1,8 +1,13 @@
 # Modern Guns — game server
 
 Authoritative [Colyseus 0.18](https://colyseus.io) server for **Modern Guns**, an 8-player
-FPS on the *Dustline Pumpstation* map (Team Deathmatch and Free-for-all). The client
-lives in `../rust-client`.
+FPS (Team Deathmatch and Free-for-all) on two maps, *Atomic Acres* and *Dustline
+Pumpstation*. The client lives in `../rust-client`.
+
+Rooms are created with a `map` option (`acres` or `dustline`, see
+`src/shared/maps.js`) and matchmaking filters on mode and map. A client that
+doesn't send one (from before maps) gets Dustline. Each room builds its own
+Rapier world from its map; the bot nav graph is built once per map.
 
 ```bash
 npm install
@@ -85,8 +90,8 @@ Movement is client-predicted; everything that matters is decided here:
 - **Rockets** (the Warhead RL) are flown here (`tickRockets`: speed, a little
   drop, 3 s max flight) and burst on the first wall or player they meet, with the
   same splash rules as a frag (your own rocket hurts you at half strength).
-- **Ladders**: a player's climbing flag only counts inside one of the
-  `LADDERS` volumes in `shared/map.js` (it also resets fall damage).
+- **Ladders**: a player's climbing flag only counts inside one of the room's
+  map's ladder volumes (`ladderAt` in `shared/maps.js`; it also resets fall damage).
 - **Teams**: you can't join a team that would end up 2+ humans bigger; auto-assign
   picks the smaller team, then the lower score, then random. If a leaver leaves the
   teams 2+ apart, the newest player on the bigger team is moved at their next death.
@@ -123,12 +128,12 @@ complete, win, MVP); the client keeps the running total and reports its rank
 ## Tests
 
 ```bash
-npm run test:bots       # boots a room, joins, lets bots fight for 20 s
+npm run test:bots       # boots a room, joins, lets bots fight for 20 s (MAP=acres, SECONDS=60)
 npm run test:movement   # walks scripted routes with the client's character controller
 npm run test:duel       # two clients: movement validation, noclip guard, hit validation
 npm run test:private    # private rooms: keys, join by key, caps, bots on/off
 npm run test:fall       # fall damage: hops/stairs free, 5 m landing hurts, tower kills
 npm run test:arsenal    # rocket kill credited to the launcher, shotgun pellets = one hit, kill XP
 npm run test:drain      # deploy drain: warm-up moved on at once, match finishes, then everyone moves
-npm run test:load       # CPU / lag / memory with 1, 2, 4 full rooms (STEPS=1,2,4,6 to change)
+npm run test:load       # CPU / lag / memory with 1, 2, 4 full rooms (STEPS=1,2,4,6, MAP=acres)
 ```

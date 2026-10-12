@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 
 import { BULLET_GROUPS, GRENADE_GROUPS, interactionGroups, WALK_GROUPS } from '../shared/constants.js'
-import { buildColliders, NAV_CHAINS, NAV_EXTRA_NODES, NAV_GRID } from '../shared/map.js'
+import { getMap } from '../shared/maps.js'
 
 let initPromise = null
 
@@ -21,11 +21,12 @@ const GRENADE_GRAVITY = -16
  * grenade bounces.
  */
 export class MapWorld {
-  constructor() {
+  constructor(map = getMap('dustline')) {
+    this.map = map
     this.world = new RAPIER.World({ x: 0, y: GRENADE_GRAVITY, z: 0 })
     this.world.timestep = 1 / 30
 
-    for (const c of buildColliders()) {
+    for (const c of map.colliders()) {
       const desc =
         c.shape === 'box'
           ? RAPIER.ColliderDesc.cuboid(c.half[0], c.half[1], c.half[2])
@@ -121,7 +122,8 @@ export class MapWorld {
  * Navigation graph
  * ------------------------------------------------------------------------- */
 
-let navCache = null
+/** Map id -> its graph: built once per process per map. */
+const navCache = new Map()
 
 /** Is there room for a standing bot (knee to head) with its feet at (x, y, z)? */
 function standable(mapWorld, x, y, z) {
@@ -152,15 +154,18 @@ function corridorClear(mapWorld, a, b) {
 }
 
 /**
- * Builds the bot waypoint graph once per process.
+ * Builds the bot waypoint graph for a map's world once per process.
  *
  * Ground nodes come from a grid laid over the map, keeping only points where the
  * floor is near ground level and a bot fits; hand-placed extras fill doorways and
  * narrow gaps. Ground nodes link to their neighbours when a bot-wide corridor is
- * clear. Elevated routes (stairs, tank tops, ramps) come from the map's chains.
+ * clear. Elevated routes (stairs, tank tops, ramps) come from the map's chains;
+ * with `linkUpper`, raised points (upstairs rooms, roofs) also link to each
+ * other wherever a bot can walk between them, like the ground does.
  */
 export function getNavGraph(mapWorld) {
-  if (navCache) return navCache
+  const { id, nav } = mapWorld.map
+  if (navCache.has(id)) return navCache.get(id)
   const nodes = []
   const links = []
   const kinds = []
@@ -177,7 +182,7 @@ export function getNavGraph(mapWorld) {
     links[j].push({ to: i, cost: d })
   }
 
-  const { spacing, half } = NAV_GRID
+  const { spacing, half } = nav.grid
   for (let x = -half; x <= half + 1e-6; x += spacing) {
     for (let z = -half; z <= half + 1e-6; z += spacing) {
       const floor = mapWorld.groundY(x, 1.7, z, 3)
@@ -185,15 +190,16 @@ export function getNavGraph(mapWorld) {
       if (standable(mapWorld, x, floor, z)) addNode([x, floor, z], 'grid')
     }
   }
-  for (const p of NAV_EXTRA_NODES) {
+  for (const p of nav.extra) {
     const floor = mapWorld.groundY(p[0], p[1] + 1.2, p[2], 3) ?? p[1]
     if (standable(mapWorld, p[0], floor, p[2])) addNode([p[0], floor, p[2]], 'extra')
   }
   const chainLinks = []
-  for (const chain of NAV_CHAINS) {
+  for (const chain of nav.chains) {
     const ids = chain.map((p, i) => addNode([...p], i === 0 ? 'extra' : 'elevated'))
     for (let i = 1; i < ids.length; i++) chainLinks.push([ids[i - 1], ids[i]])
   }
+  for (const p of nav.upper ?? []) addNode([...p], 'elevated')
 
   // Ground links: grid neighbours (incl. diagonals) and anything near an extra.
   const ground = nodes.map((_, i) => i).filter((i) => kinds[i] !== 'elevated')
@@ -209,13 +215,25 @@ export function getNavGraph(mapWorld) {
     }
   }
   for (const [i, j] of chainLinks) link(i, j)
+  if (nav.linkUpper) {
+    const raised = nodes.map((_, i) => i).filter((i) => kinds[i] === 'elevated')
+    for (let a = 0; a < raised.length; a++) {
+      for (let b = a + 1; b < raised.length; b++) {
+        const i = raised[a]
+        const j = raised[b]
+        const d = Math.hypot(nodes[i][0] - nodes[j][0], nodes[i][2] - nodes[j][2])
+        if (d > 4.5 || Math.abs(nodes[i][1] - nodes[j][1]) > 0.4) continue
+        if (corridorClear(mapWorld, nodes[i], nodes[j])) link(i, j)
+      }
+    }
+  }
 
-  // Keep only what's reachable from open ground near the tower; pockets under
+  // Keep only what's reachable from open ground near the middle; pockets under
   // ramps or on rubble would otherwise strand a bot that picked them.
   let root = 0
   let rootD = Infinity
   nodes.forEach((n, i) => {
-    const d = Math.hypot(n[0], n[2] - 6)
+    const d = Math.hypot(n[0] - nav.root[0], n[2] - nav.root[1])
     if (kinds[i] === 'grid' && d < rootD) {
       rootD = d
       root = i
@@ -239,38 +257,77 @@ export function getNavGraph(mapWorld) {
     remap.set(i, kept.length)
     kept.push(i)
   })
-  navCache = {
+  const graph = {
     nodes: kept.map((i) => nodes[i]),
     kinds: kept.map((i) => kinds[i]),
     links: kept.map((i) => links[i].filter((l) => remap.has(l.to)).map((l) => ({ to: remap.get(l.to), cost: l.cost }))),
+    /** Nodes that didn't connect to the rest, for map checks. */
+    dropped: nodes.filter((_, i) => !keep.has(i)),
   }
-  return navCache
+  navCache.set(id, graph)
+  return graph
 }
 
-/** Dijkstra over the (small) nav graph. Returns node indices from start to goal, inclusive. */
+/**
+ * Dijkstra over the nav graph with a binary heap (lazy deletion: stale entries
+ * are skipped when popped). Returns node indices from start to goal, inclusive.
+ */
 export function findPath(graph, start, goal) {
   if (start === goal) return [start]
   const n = graph.nodes.length
   const dist = new Float64Array(n).fill(Infinity)
   const prev = new Int32Array(n).fill(-1)
   const done = new Uint8Array(n)
-  dist[start] = 0
-  for (;;) {
-    let u = -1
-    let best = Infinity
-    for (let i = 0; i < n; i++) {
-      if (!done[i] && dist[i] < best) {
-        best = dist[i]
-        u = i
-      }
+  const heapNode = []
+  const heapKey = []
+  const push = (node, key) => {
+    let i = heapNode.length
+    heapNode.push(node)
+    heapKey.push(key)
+    while (i > 0) {
+      const p = (i - 1) >> 1
+      if (heapKey[p] <= key) break
+      heapNode[i] = heapNode[p]
+      heapKey[i] = heapKey[p]
+      i = p
     }
-    if (u === -1 || u === goal) break
+    heapNode[i] = node
+    heapKey[i] = key
+  }
+  const pop = () => {
+    const top = heapNode[0]
+    const lastNode = heapNode.pop()
+    const lastKey = heapKey.pop()
+    const size = heapNode.length
+    if (size) {
+      let i = 0
+      for (;;) {
+        const l = i * 2 + 1
+        if (l >= size) break
+        const c = l + 1 < size && heapKey[l + 1] < heapKey[l] ? l + 1 : l
+        if (heapKey[c] >= lastKey) break
+        heapNode[i] = heapNode[c]
+        heapKey[i] = heapKey[c]
+        i = c
+      }
+      heapNode[i] = lastNode
+      heapKey[i] = lastKey
+    }
+    return top
+  }
+  dist[start] = 0
+  push(start, 0)
+  while (heapNode.length) {
+    const u = pop()
+    if (done[u]) continue
+    if (u === goal) break
     done[u] = 1
     for (const { to, cost } of graph.links[u]) {
       const nd = dist[u] + cost
       if (nd < dist[to]) {
         dist[to] = nd
         prev[to] = u
+        push(to, nd)
       }
     }
   }
@@ -282,21 +339,23 @@ export function findPath(graph, start, goal) {
 
 /** Nearest node, preferring one with a clear walk line from `pos`. */
 export function nearestNode(graph, mapWorld, pos, needLine = true) {
-  let best = -1
-  let bestD = Infinity
   let fallback = -1
   let fallbackD = Infinity
+  // Candidates within reach, nearest first: the first with a clear line wins,
+  // so usually only one or two rays are cast.
+  const near = []
   graph.nodes.forEach((n, i) => {
     const d = Math.hypot(n[0] - pos[0], (n[1] - pos[1]) * 2, n[2] - pos[2])
     if (d < fallbackD) {
       fallbackD = d
       fallback = i
     }
-    if (d >= bestD || d > 14) return
-    if (!needLine || mapWorld.clearLine([pos[0], pos[1] + 0.6, pos[2]], [n[0], n[1] + 0.6, n[2]], 0, WALK_GROUPS)) {
-      bestD = d
-      best = i
-    }
+    if (d <= 14) near.push([d, i])
   })
-  return best >= 0 ? best : fallback
+  near.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  for (const [, i] of near) {
+    const n = graph.nodes[i]
+    if (!needLine || mapWorld.clearLine([pos[0], pos[1] + 0.6, pos[2]], [n[0], n[1] + 0.6, n[2]], 0, WALK_GROUPS)) return i
+  }
+  return fallback
 }

@@ -23,7 +23,7 @@ import {
   WALK_GROUPS,
 } from '../shared/constants.js'
 import { chestPoint, headPoint, hitboxFor, rayHitbox, raySphere } from '../shared/hitbox.js'
-import { AMMO_CRATE, KILL_Y, ladderAt, MAP_HALF, MAP_NAME, SPAWNS } from '../shared/map.js'
+import { getMap, isMapId, LEGACY_MAP } from '../shared/maps.js'
 import { clamp, dist2, dist3 } from '../shared/math.js'
 import {
   attachmentsFor,
@@ -124,6 +124,8 @@ export class DustlineRoom extends Room {
     /** Zero point for the per-player position timestamps (`mt`). */
     this.t0 = Date.now()
     this.mode = options?.mode === 'ffa' ? 'ffa' : 'tdm'
+    // Clients from before there was a choice of map play the old one.
+    this.map = getMap(isMapId(options?.map) ? options.map : LEGACY_MAP)
     // Private rooms: created with a key, hidden from matchmaking, joined by key only.
     this.isPrivate = Boolean(options?.private)
     const maxPlayers = this.isPrivate ? clamp(Math.round(Number(options?.maxPlayers) || MAX_PLAYERS), 2, MAX_PLAYERS) : MAX_PLAYERS
@@ -155,7 +157,7 @@ export class DustlineRoom extends Room {
     state.timeLeft = this.rules.timeLimit
     this.state = state
 
-    this.mapWorld = new MapWorld()
+    this.mapWorld = new MapWorld(this.map)
     this.nav = getNavGraph(this.mapWorld)
     /** id -> server-only bookkeeping (loadout, ammo, timers, bot brain...). */
     this.meta = new Map()
@@ -170,7 +172,7 @@ export class DustlineRoom extends Room {
 
     this.draining = false
     liveRooms.add(this)
-    this.setMetadata({ mode: this.mode, map: MAP_NAME, private: this.isPrivate })
+    this.setMetadata({ mode: this.mode, map: this.map.id, mapName: this.map.name, private: this.isPrivate })
     this.registerMessages()
     this.setTimestep((dtMs) => this.tick(dtMs), 1000 / 30)
     this.clock.setInterval(() => this.everySecond(), 1000)
@@ -239,7 +241,7 @@ export class DustlineRoom extends Room {
     this.state.players.set(p.id, p)
     if (this.isPrivate && !this.state.host) this.state.host = p.id
 
-    client.send('welcome', { id: p.id, mode: this.mode, map: MAP_NAME, code: this.roomCode ?? '', max: this.maxClients })
+    client.send('welcome', { id: p.id, mode: this.mode, map: this.map.name, mapId: this.map.id, code: this.roomCode ?? '', max: this.maxClients })
     if (this.mode === 'tdm') {
       meta.teamTimer = this.clock.setTimeout(
         () => this.assignTeam(p, 'auto', 'timeout'),
@@ -413,7 +415,8 @@ export class DustlineRoom extends Room {
     const maxHorizontal = MAX_LEGAL_SPEED * dt * 1.4 + 0.8
     const rise = pos[1] - p.y
     const maxRise = 12 * dt + 0.8
-    const outside = Math.abs(pos[0]) > MAP_HALF + 1 || Math.abs(pos[2]) > MAP_HALF + 1 || pos[1] < KILL_Y - 1 || pos[1] > 16
+    const { half, killY, maxY } = this.map
+    const outside = Math.abs(pos[0]) > half + 1 || Math.abs(pos[2]) > half + 1 || pos[1] < killY - 1 || pos[1] > maxY
     if (horizontal > maxHorizontal || rise > maxRise || outside || this.throughWall(p, pos)) {
       if (now - meta.lastCorrectAt > 250) {
         meta.lastCorrectAt = now
@@ -432,7 +435,7 @@ export class DustlineRoom extends Room {
     p.ads = Boolean(f & 2)
     p.sprint = Boolean(f & 4)
     // Only believed inside a ladder volume (it also resets fall damage).
-    p.climbing = Boolean(f & 8) && Boolean(ladderAt(p.x, p.y, p.z))
+    p.climbing = Boolean(f & 8) && Boolean(this.map.ladderAt(p.x, p.y, p.z))
     p.prone = Boolean(f & 16) && !p.climbing
     p.slide = Boolean(f & 32) && !p.prone
     this.trackFall(p, meta)
@@ -617,7 +620,7 @@ export class DustlineRoom extends Room {
         const h = rayHitbox(r.pos, dir, hitboxFor(victim.x, victim.y, victim.z, stanceOf(victim), victim.yaw), 0.15)
         if (h && h.t < t) t = h.t
       }
-      const expired = now - r.born > r.w.projectile.maxFlight * 1000 || r.pos[1] < KILL_Y
+      const expired = now - r.born > r.w.projectile.maxFlight * 1000 || r.pos[1] < this.map.killY
       if (t <= len || expired) {
         const at = t <= len ? [r.pos[0] + dir[0] * t, r.pos[1] + dir[1] * t, r.pos[2] + dir[2] * t] : r.pos
         // Pull the burst back off the wall a touch so cover doesn't eat it all.
@@ -886,7 +889,8 @@ export class DustlineRoom extends Room {
    * ----------------------------------------------------------------------- */
 
   pickSpawn(p) {
-    const list = this.mode === 'tdm' ? SPAWNS[p.team] ?? SPAWNS.ffa : SPAWNS.ffa
+    const { spawns } = this.map
+    const list = this.mode === 'tdm' ? spawns[p.team] ?? spawns.ffa : spawns.ffa
     const others = [...this.state.players.values()].filter((o) => o !== p && o.state === ALIVE)
     let best = list[0]
     let bestScore = -Infinity
@@ -1075,7 +1079,7 @@ export class DustlineRoom extends Room {
         g.z = t.z
       }
       const pos = [t.x, t.y, t.z]
-      if (t.y < KILL_Y) {
+      if (t.y < this.map.killY) {
         this.removeGrenade(id)
         continue
       }
@@ -1265,9 +1269,9 @@ export class DustlineRoom extends Room {
       meta.client?.send('ammo', { ammo: this.ammoPayload(meta), msg: 'AMMO PICKED UP' })
       break
     }
-    const c = AMMO_CRATE.p
-    if (now >= meta.ammoCrateAt && dist2(p.x, p.z, c[0], c[2]) <= AMMO_CRATE.radius && Math.abs(p.y - c[1]) < 1.5) {
-      meta.ammoCrateAt = now + AMMO_CRATE.cooldown * 1000
+    const crate = this.map.ammoCrates.find((a) => dist2(p.x, p.z, a.p[0], a.p[2]) <= a.radius && Math.abs(p.y - a.p[1]) < 1.5)
+    if (crate && now >= meta.ammoCrateAt) {
+      meta.ammoCrateAt = now + crate.cooldown * 1000
       for (const [id, ammo] of Object.entries(meta.ammo)) ammo.reserve = this.weaponOf(meta, id).reserve
       meta.lethal = EQUIPMENT.frag.count
       meta.tactical = EQUIPMENT[meta.activeClass.tactical].count
@@ -1302,7 +1306,7 @@ export class DustlineRoom extends Room {
             meta.regenAcc -= add
           }
         }
-        if (p.y < KILL_Y && playing) this.killPlayer(p, null, 'fall', false)
+        if (p.y < this.map.killY && playing) this.killPlayer(p, null, 'fall', false)
         else if (meta.bot && playing) {
           tickBot(this, p, meta, dt, now)
           p.mt = now - this.t0

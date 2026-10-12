@@ -89,7 +89,7 @@ const gameServer = new Server({
 
 // One room type; `mode` keeps TDM and FFA players in separate rooms. joinOrCreate
 // fills an existing room of that mode (max 8 players) before opening a new one.
-gameServer.define(ROOM_NAME, DustlineRoom).filterBy(['mode'])
+gameServer.define(ROOM_NAME, DustlineRoom).filterBy(['mode', 'map'])
 
 // Deploys and scale-downs send SIGTERM. Colyseus then locks every room (no new
 // players; the matchmaker sends them to the fresh pod) and calls each room's
