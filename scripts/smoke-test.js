@@ -2,7 +2,7 @@
  * Headless end-to-end check: boots the room in-process, joins as a fake client,
  * picks a team, deploys, and lets the bots play for a while.
  *
- *   npm run test:bots            (MAP=acres for Atomic Acres, MODE=ffa, SECONDS=40)
+ *   npm run test:bots            (MAP=acres or MAP=palmwood, MODE=ffa, SECONDS=40)
  */
 import { Server } from 'colyseus'
 import { WebSocketTransport } from '@colyseus/ws-transport'
