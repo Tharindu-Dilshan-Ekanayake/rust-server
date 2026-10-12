@@ -4,8 +4,9 @@
  * Bots are ordinary PlayerState entries driven from the room's simulation tick.
  * They see through the same map raycasts as everyone else, can't see through
  * smoke, and their shots go through the room's normal damage path. Hit rolls are
- * probabilistic rather than simulated bullets, tuned so a bot is a threat in the
- * open but beatable by flanking or using cover.
+ * probabilistic rather than simulated bullets, tuned (TUNING below) so a bot is
+ * easy going: slow to spot you and turn, loose with its aim, and warming up over
+ * the first moments of a fight, so a player who sees it first wins.
  */
 import { eyeHeightFor, PLAYER, stanceOf, WALK_GROUPS } from '../shared/constants.js'
 import { MAP_HALF } from '../shared/map.js'
@@ -21,9 +22,51 @@ export const BOT_NAMES = [
 
 const GRENADE_G = 16
 
+/** How hard the bots are. Every number here makes them easier the further it goes. */
+const TUNING = {
+  /** Per-bot skill range; scales reaction, turn speed and accuracy. */
+  skillMin: 0.7,
+  skillRange: 0.2,
+  /** How far they see (m), and the half-width of their view (dot product; 0.5 = 120 degrees). */
+  sight: 55,
+  cone: 0.5,
+  /** Time to react to a new target (ms): base + random + per metre, divided by skill. */
+  reactBase: 500,
+  reactRandom: 500,
+  reactPerMetre: 8,
+  /** Aim turn rate (rad/s), times skill. */
+  turnRate: 3.2,
+  /** Hit chance at point blank, the drop per metre, and the floor. */
+  hitNear: 0.5,
+  hitPerMetre: 0.008,
+  hitFar: 0.1,
+  headChance: 0.06,
+  /** Over the first part of a fight their aim comes in from this fraction to full. */
+  warmupMs: 1400,
+  warmupFrom: 0.35,
+  /** Firing: interval multiplier, burst length, and the pause between bursts (ms). */
+  fireSlow: 1.5,
+  burstMin: 3,
+  burstRange: 3,
+  burstPause: 300,
+  burstPauseRandom: 400,
+  /** Snipers: hit and head chance, and the time between shots (ms). */
+  sniperHit: 0.35,
+  sniperHead: 0.1,
+  sniperGap: 2200,
+  sniperGapRandom: 1200,
+  /** Knife: how often a stab lands, and the cooldown multiplier. */
+  meleeHit: 0.45,
+  meleeSlow: 1.5,
+  /** Grenades: first one after (ms), later ones every (ms), chance per chance. */
+  grenadeFirst: 15000,
+  grenadeEvery: 20000,
+  grenadeChance: 0.15,
+}
+
 export function createBotBrain() {
   return {
-    skill: 0.85 + Math.random() * 0.3,
+    skill: TUNING.skillMin + Math.random() * TUNING.skillRange,
     path: null,
     pathIdx: 0,
     target: null,
@@ -57,7 +100,7 @@ export function resetBotBrain(brain, cls) {
   brain.flashedUntil = 0
   brain.reloadUntil = 0
   brain.mag = effectiveWeapon(cls.primary, cls.primaryAtt).magSize
-  brain.grenadeReadyAt = Date.now() + 8000 + Math.random() * 8000
+  brain.grenadeReadyAt = Date.now() + TUNING.grenadeFirst + Math.random() * 10000
 }
 
 const eyeOf = (p) => [p.x, p.y + eyeHeightFor(stanceOf(p)), p.z]
@@ -76,11 +119,11 @@ function think(room, p, meta, now) {
     const dx = chest[0] - eye[0]
     const dz = chest[2] - eye[2]
     const d = Math.hypot(dx, chest[1] - eye[1], dz)
-    if (d > 70) continue
+    if (d > TUNING.sight) continue
     const hurtBy = meta.lastAttacker === other.id && now - meta.lastDamageAt < 2500
     if (d > 5 && !hurtBy) {
       const flat = Math.hypot(dx, dz) || 1
-      if ((dx * fx + dz * fz) / flat < 0.34) continue // outside a ~140 degree cone
+      if ((dx * fx + dz * fz) / flat < TUNING.cone) continue // outside its view cone
     }
     const head = headPoint(other.x, other.y, other.z, stanceOf(other), other.yaw)
     if (!room.canSee(eye, chest) && !room.canSee(eye, head)) continue
@@ -93,7 +136,8 @@ function think(room, p, meta, now) {
   if (best) {
     if (b.target !== best.id) {
       b.target = best.id
-      b.reactionAt = now + (230 + Math.random() * 340 + bestD * 5) / b.skill
+      b.reactionAt =
+        now + (TUNING.reactBase + Math.random() * TUNING.reactRandom + bestD * TUNING.reactPerMetre) / b.skill
       b.burst = 0
     }
     b.hasLine = true
@@ -122,7 +166,7 @@ function maybeThrowGrenade(room, p, meta, now) {
   const b = meta.bot
   if (!b.lastKnown || meta.lethal <= 0 || now < b.grenadeReadyAt) return
   const age = now - b.lastKnownAt
-  if (age < 500 || age > 4000 || Math.random() > 0.3) return
+  if (age < 500 || age > 4000 || Math.random() > TUNING.grenadeChance) return
   const eye = eyeOf(p)
   const dx = b.lastKnown[0] - eye[0]
   const dz = b.lastKnown[2] - eye[2]
@@ -136,7 +180,7 @@ function maybeThrowGrenade(room, p, meta, now) {
   const vel = [(dx / R) * v * Math.cos(theta), v * Math.sin(theta), (dz / R) * v * Math.cos(theta)]
   const origin = [eye[0] + (dx / R) * 0.5, eye[1], eye[2] + (dz / R) * 0.5]
   meta.lethal -= 1
-  b.grenadeReadyAt = now + 12000 + Math.random() * 6000
+  b.grenadeReadyAt = now + TUNING.grenadeEvery + Math.random() * 10000
   room.spawnGrenade(p, 'frag', origin, vel, EQUIPMENT.frag.fuse)
 }
 
@@ -302,7 +346,7 @@ export function tickBot(room, p, meta, dt, now) {
   p.ads = Boolean(targetAlive && b.hasLine && !flashed && targetDist > 12)
 
   // Turn toward the wanted aim at a capped rate.
-  const turn = 5.5 * b.skill * dt
+  const turn = TUNING.turnRate * b.skill * dt
   p.yaw += clamp(angleDelta(p.yaw, wantYaw), -turn, turn)
   p.pitch += clamp(wantPitch - p.pitch, -turn, turn)
   meta.botMoving = moving
@@ -311,8 +355,8 @@ export function tickBot(room, p, meta, dt, now) {
   if (!targetAlive || !b.hasLine || flashed || now < b.reactionAt) return
 
   if (targetDist < 2.2 && now >= b.meleeReadyAt) {
-    b.meleeReadyAt = now + WEAPONS.knife.fireInterval * 1000
-    room.botMelee(p, target, Math.random() < 0.7)
+    b.meleeReadyAt = now + WEAPONS.knife.fireInterval * 1000 * TUNING.meleeSlow
+    room.botMelee(p, target, Math.random() < TUNING.meleeHit)
     return
   }
 
@@ -331,21 +375,25 @@ export function tickBot(room, p, meta, dt, now) {
   let pHit
   let headChance
   if (weapon.id === 'sniper') {
-    b.nextShotAt = now + 1500 + Math.random() * 900
-    pHit = 0.5
-    headChance = 0.25
+    b.nextShotAt = now + TUNING.sniperGap + Math.random() * TUNING.sniperGapRandom
+    pHit = TUNING.sniperHit
+    headChance = TUNING.sniperHead
   } else {
-    if (b.burst <= 0) b.burst = 3 + Math.floor(Math.random() * 5)
+    if (b.burst <= 0) b.burst = TUNING.burstMin + Math.floor(Math.random() * TUNING.burstRange)
     b.burst -= 1
-    b.nextShotAt = now + weapon.fireInterval * 1000 * 1.25 + (b.burst === 0 ? 280 + Math.random() * 450 : 0)
-    pHit = clamp(0.62 - targetDist * 0.009, 0.14, 0.62)
-    headChance = 0.12
+    const pause = b.burst === 0 ? TUNING.burstPause + Math.random() * TUNING.burstPauseRandom : 0
+    b.nextShotAt = now + weapon.fireInterval * 1000 * TUNING.fireSlow + pause
+    pHit = clamp(TUNING.hitNear - targetDist * TUNING.hitPerMetre, TUNING.hitFar, TUNING.hitNear)
+    headChance = TUNING.headChance
   }
   if (target.sprint) pHit *= 0.75
   if (target.prone) pHit *= 0.7
   else if (target.crouch || target.slide) pHit *= 0.85
   if (meta.botMoving) pHit *= 0.85
-  pHit = clamp(pHit * b.skill, 0.05, 0.85)
+  // The first moments of a fight are shaky: the player who reacts gets a chance.
+  const warm = clamp((now - b.reactionAt) / TUNING.warmupMs, 0, 1)
+  pHit *= TUNING.warmupFrom + (1 - TUNING.warmupFrom) * warm
+  pHit = clamp(pHit * b.skill, 0.03, 0.6)
 
   const hit = Math.random() < pHit
   const r = Math.random()
