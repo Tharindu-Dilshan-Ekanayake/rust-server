@@ -6,6 +6,7 @@
  *
  *   npm run test:load            # 1, 2, 4 rooms
  *   STEPS=1,2,3,4,6 npm run test:load
+ *   MAP=acres npm run test:load  # on Atomic Acres (default: Dustline)
  *
  * A Legion pod is 1 vCPU / 512 MB; set the deploy's seatCap so a full pod stays
  * well under 100% CPU with lag p99 close to the 33 ms tick.
@@ -18,6 +19,7 @@ import { ROOM_NAME } from '../src/shared/constants.js'
 const PORT = 2597
 const STEPS = (process.env.STEPS || '1,2,4').split(',').map(Number)
 const SAMPLE_S = Number(process.env.SAMPLE_S || 15)
+const MAP = process.env.MAP || 'dustline'
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const server = spawn(process.execPath, ['src/server.js'], {
@@ -37,7 +39,7 @@ const opts = { name: 'Load', classData: { name: 'TEST', primary: 'ar', tactical:
 try {
   for (const target of STEPS) {
     while (rooms.length < target) {
-      const room = await client.create(ROOM_NAME, { mode: 'tdm', private: true, maxPlayers: 8, bots: true, ...opts })
+      const room = await client.create(ROOM_NAME, { mode: 'tdm', private: true, maxPlayers: 8, bots: true, map: MAP, ...opts })
       room.onMessage('*', () => {})
       await wait(200)
       room.send('choose_team', { team: 'auto' })

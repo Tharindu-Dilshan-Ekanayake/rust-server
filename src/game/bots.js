@@ -9,7 +9,6 @@
  * the first moments of a fight, so a player who sees it first wins.
  */
 import { eyeHeightFor, PLAYER, stanceOf, WALK_GROUPS } from '../shared/constants.js'
-import { MAP_HALF } from '../shared/map.js'
 import { chestPoint, headPoint } from '../shared/hitbox.js'
 import { angleDelta, clamp } from '../shared/math.js'
 import { effectiveWeapon, EQUIPMENT, WEAPONS } from '../shared/weapons.js'
@@ -222,8 +221,9 @@ function step(room, p, dx, dz, allowDrop) {
     const toi = room.mapWorld.raycast([p.x, p.y + h, p.z], [nx, 0, nz], len + 0.38, WALK_GROUPS)
     if (toi !== null) return false
   }
-  const x = clamp(p.x + dx, -MAP_HALF + 0.6, MAP_HALF - 0.6)
-  const z = clamp(p.z + dz, -MAP_HALF + 0.6, MAP_HALF - 0.6)
+  const half = room.map.half
+  const x = clamp(p.x + dx, -half + 0.6, half - 0.6)
+  const z = clamp(p.z + dz, -half + 0.6, half - 0.6)
   const y = room.mapWorld.groundY(x, p.y + 1.0, z)
   if (y === null) return false
   if (!allowDrop && y < p.y - 0.9) return false
