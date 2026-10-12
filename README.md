@@ -1,10 +1,10 @@
 # Modern Guns — game server
 
 Authoritative [Colyseus 0.18](https://colyseus.io) server for **Modern Guns**, an 8-player
-FPS (Team Deathmatch and Free-for-all) on two maps, *Atomic Acres* and *Dustline
-Pumpstation*. The client lives in `../rust-client`.
+FPS (Team Deathmatch and Free-for-all) on three maps, *Palmwood*, *Atomic Acres*
+and *Dustline Pumpstation*. The client lives in `../rust-client`.
 
-Rooms are created with a `map` option (`acres` or `dustline`, see
+Rooms are created with a `map` option (`palmwood`, `acres` or `dustline`, see
 `src/shared/maps.js`) and matchmaking filters on mode and map. A client that
 doesn't send one (from before maps) gets Dustline. Each room builds its own
 Rapier world from its map; the bot nav graph is built once per map.

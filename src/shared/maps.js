@@ -5,6 +5,7 @@
  */
 import * as dustline from './map.js'
 import * as acres from './mapAcres.js'
+import * as palmwood from './mapPalmwood.js'
 
 export const MAPS = Object.freeze({
   dustline: Object.freeze({
@@ -46,10 +47,28 @@ export const MAPS = Object.freeze({
     killY: -5,
     maxY: 16,
   }),
+  palmwood: Object.freeze({
+    id: 'palmwood',
+    name: palmwood.PALMWOOD_NAME,
+    tagline: 'Tropical plywood shanty town',
+    blurb: 'A plywood shanty town in the palms. A dirt loop round the unfinished Frame, market stalls, a warehouse, and two lookout towers.',
+    size: '76 × 76 m',
+    isNew: true,
+    half: palmwood.PALMWOOD_HALF,
+    entities: palmwood.PALMWOOD_ENTITIES,
+    colliders: palmwood.buildPalmwoodColliders,
+    ladders: palmwood.PW_LADDERS,
+    ladderAt: palmwood.palmwoodLadderAt,
+    spawns: palmwood.PALMWOOD_SPAWNS,
+    ammoCrates: palmwood.PW_AMMO,
+    nav: palmwood.PALMWOOD_NAV,
+    killY: -5,
+    maxY: 16,
+  }),
 })
 
 /** Order maps are listed in the menus. */
-export const MAP_IDS = Object.freeze(['acres', 'dustline'])
+export const MAP_IDS = Object.freeze(['palmwood', 'acres', 'dustline'])
 /** What a new player starts on. */
 export const DEFAULT_MAP = 'acres'
 /** What a room opens on when the client didn't say (clients from before maps). */
