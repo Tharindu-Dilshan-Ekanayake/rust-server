@@ -2,9 +2,11 @@ import { Room } from 'colyseus'
 
 import { botHearNoise, BOT_NAMES, createBotBrain, resetBotBrain, tickBot } from '../game/bots.js'
 import { getNavGraph, MapWorld } from '../game/physics.js'
+import { SearchDestroy } from '../game/searchDestroy.js'
 import { liveRooms } from '../game/stats.js'
 import {
   eyeHeightFor,
+  isTeamMode,
   MATCH_END_DURATION,
   MATCH_RULES,
   MAX_LEGAL_SPEED,
@@ -16,6 +18,7 @@ import {
   SERVER_MOVING_CODE,
   PLAYER_STATES,
   RESPAWN_DELAY,
+  ROUND,
   SPAWN_PROTECTION,
   stanceOf,
   TEAM_SELECT_TIMEOUT,
@@ -123,7 +126,7 @@ export class DustlineRoom extends Room {
   onCreate(options) {
     /** Zero point for the per-player position timestamps (`mt`). */
     this.t0 = Date.now()
-    this.mode = options?.mode === 'ffa' ? 'ffa' : 'tdm'
+    this.mode = options?.mode === 'ffa' || options?.mode === 'snd' ? options.mode : 'tdm'
     // Clients from before there was a choice of map play the old one.
     this.map = getMap(isMapId(options?.map) ? options.map : LEGACY_MAP)
     // Private rooms: created with a key, hidden from matchmaking, joined by key only.
@@ -169,6 +172,11 @@ export class DustlineRoom extends Room {
     this.uid = 0
     this.joinCounter = 0
     this.botNameCursor = Math.floor(Math.random() * BOT_NAMES.length)
+
+    /** Search & Destroy's rounds and bomb (null in the other modes). */
+    this.snd = this.mode === 'snd' ? new SearchDestroy(this) : null
+    // A public room plays rounds from the start (a private one warms up first).
+    if (this.snd && state.phase === 'playing') this.snd.resetMatch()
 
     this.draining = false
     liveRooms.add(this)
@@ -242,7 +250,7 @@ export class DustlineRoom extends Room {
     if (this.isPrivate && !this.state.host) this.state.host = p.id
 
     client.send('welcome', { id: p.id, mode: this.mode, map: this.map.name, mapId: this.map.id, code: this.roomCode ?? '', max: this.maxClients })
-    if (this.mode === 'tdm') {
+    if (isTeamMode(this.mode)) {
       meta.teamTimer = this.clock.setTimeout(
         () => this.assignTeam(p, 'auto', 'timeout'),
         TEAM_SELECT_TIMEOUT * 1000,
@@ -261,6 +269,7 @@ export class DustlineRoom extends Room {
     meta?.reloadTimer?.clear()
     this.state.players.delete(p.id)
     this.meta.delete(p.id)
+    this.snd?.onLeave(p)
     if (this.state.host === p.id) {
       // Hand the room to whoever has been here longest.
       const next = [...this.state.players.values()]
@@ -323,15 +332,28 @@ export class DustlineRoom extends Room {
     for (const p of s.players.values()) {
       if (p.isBot || p.state === SELECTING) continue
       this.awardXp(p, XP.matchComplete, 'match')
-      const won = this.mode === 'tdm' ? s.winner === p.team : s.winner === p.id
+      const won = isTeamMode(this.mode) ? s.winner === p.team : s.winner === p.id
       if (won) this.awardXp(p, XP.matchWin, 'win')
       if (s.mvp === p.id) this.awardXp(p, XP.mvp, 'mvp')
     }
   }
 
-  /** True while players can fight: the match itself, or a private room's warm-up. */
+  /**
+   * True while players can fight: the match itself, or a private room's
+   * warm-up. In Search & Destroy, not in the freeze or between rounds.
+   */
   inPlay() {
+    if (this.snd?.on) return this.snd.fighting()
     return this.state.phase === 'playing' || this.state.phase === 'warmup'
+  }
+
+  /** Grenades, rockets, smoke and dropped ammo cleared away (a new round). */
+  clearRoundDebris() {
+    for (const id of [...this.grenadeBodies.keys()]) this.removeGrenade(id)
+    this.clearRockets()
+    this.state.smokes.clear()
+    this.state.pickups.clear()
+    this.pickupExpiry.clear()
   }
 
   /** Host only, from warm-up: scores wiped, everyone back to the deploy screen, clock on. */
@@ -395,6 +417,8 @@ export class DustlineRoom extends Room {
     this.onMessage('spawn_request', withPlayer(this.onSpawnRequest))
     this.onMessage('avatar', withPlayer((_c, p, _m, msg) => (p.avatar = sanitizeAvatar(msg))))
     this.onMessage('start_match', withPlayer(this.onStartMatch))
+    // Search & Destroy: holding Use (plant / defuse).
+    this.onMessage('use', withPlayer((_c, p, _m, msg) => this.snd?.onUse(p, Boolean(msg.on))))
     this.onMessage('rank', withPlayer((_c, p, _m, msg) => (p.rank = clamp(Math.round(Number(msg.r) || 1), 1, RANKS.length))))
     this.onMessage('pong', withPlayer((_c, p, _m, msg) => {
       if (isNum(msg.t)) p.ping = clamp(Math.round(Date.now() - msg.t), 0, 999)
@@ -417,7 +441,9 @@ export class DustlineRoom extends Room {
     const maxRise = 12 * dt + 0.8
     const { half, killY, maxY } = this.map
     const outside = Math.abs(pos[0]) > half + 1 || Math.abs(pos[2]) > half + 1 || pos[1] < killY - 1 || pos[1] > maxY
-    if (horizontal > maxHorizontal || rise > maxRise || outside || this.throughWall(p, pos)) {
+    // Search & Destroy's freeze: everyone stays on their spawn.
+    const frozen = this.snd?.on && this.state.roundPhase === ROUND.FREEZE && meta.spawnAt && dist2(pos[0], pos[2], meta.spawnAt[0], meta.spawnAt[1]) > 1.2
+    if (horizontal > maxHorizontal || rise > maxRise || outside || frozen || this.throughWall(p, pos)) {
       if (now - meta.lastCorrectAt > 250) {
         meta.lastCorrectAt = now
         client.send('correct', { p: [p.x, p.y, p.z] })
@@ -729,7 +755,7 @@ export class DustlineRoom extends Room {
   }
 
   onChooseTeam(_client, p, _meta, msg) {
-    if (this.mode !== 'tdm' || p.state !== SELECTING) return
+    if (!isTeamMode(this.mode) || p.state !== SELECTING) return
     this.assignTeam(p, msg.team, 'choice')
   }
 
@@ -744,10 +770,16 @@ export class DustlineRoom extends Room {
     client.send('class_ack', { ok: true, pending: p.state === ALIVE, name: cls.name })
   }
 
-  onSpawnRequest(_client, p, meta, msg) {
-    if (p.state !== DEPLOYING || !this.inPlay()) return
+  onSpawnRequest(client, p, meta, msg) {
+    if (p.state !== DEPLOYING || (this.state.phase !== 'playing' && this.state.phase !== 'warmup')) return
     const cls = sanitizeClass(msg.classData)
     if (cls) meta.pendingClass = cls
+    // Search & Destroy: too late into the round, you watch until the next.
+    if (this.snd && !this.snd.mayJoin(p)) {
+      p.state = DEAD
+      client.send('snd', { e: 'wait' })
+      return
+    }
     this.spawnPlayer(p)
   }
 
@@ -828,7 +860,7 @@ export class DustlineRoom extends Room {
       while (mine.length > desired) this.removeBot(mine.shift())
       for (let i = mine.length; i < desired; i++) this.addBot(team)
     }
-    if (this.mode === 'tdm') {
+    if (isTeamMode(this.mode)) {
       for (const team of [TEAMS.ALPHA, TEAMS.BRAVO]) {
         adjust(team, Math.max(0, this.rules.teamSize - this.humansOn(team)))
       }
@@ -873,6 +905,7 @@ export class DustlineRoom extends Room {
   removeBot(p) {
     this.state.players.delete(p.id)
     this.meta.delete(p.id)
+    this.snd?.onLeave(p)
   }
 
   isEnemy(a, b) {
@@ -890,7 +923,9 @@ export class DustlineRoom extends Room {
 
   pickSpawn(p) {
     const { spawns } = this.map
-    const list = this.mode === 'tdm' ? spawns[p.team] ?? spawns.ffa : spawns.ffa
+    // Search & Destroy: by side (attack or defence), not by team.
+    const side = this.snd?.on ? this.snd.spawnSide(p.team) : p.team
+    const list = isTeamMode(this.mode) ? spawns[side] ?? spawns.ffa : spawns.ffa
     const others = [...this.state.players.values()].filter((o) => o !== p && o.state === ALIVE)
     let best = list[0]
     let bestScore = -Infinity
@@ -964,6 +999,7 @@ export class DustlineRoom extends Room {
     meta.lastAttacker = null
     meta.lastMoveAt = now
     meta.regenAcc = 0
+    meta.spawnAt = [p.x, p.z]
 
     if (meta.bot) {
       resetBotBrain(meta.bot, cls)
@@ -976,6 +1012,7 @@ export class DustlineRoom extends Room {
         ammo: this.ammoPayload(meta),
       })
     }
+    this.snd?.onSpawn(p)
   }
 
   applyDamage(victim, amount, attacker, weaponId, opts = {}) {
@@ -1032,6 +1069,7 @@ export class DustlineRoom extends Room {
       khp: killer && killer !== victim ? killer.hp : 0,
     })
     if (!victim.isBot) this.maybeMoveForBalance(victim)
+    this.snd?.onDeath(victim)
     this.checkScoreLimit()
   }
 
@@ -1116,8 +1154,8 @@ export class DustlineRoom extends Room {
     for (const victim of this.state.players.values()) {
       if (victim.state !== ALIVE) continue
       const self = victim.id === gd.owner
-      // No friendly fire in TDM, but your own grenade can still kill you.
-      if (!self && this.mode === 'tdm' && victim.team === gd.ownerTeam) continue
+      // No friendly fire between teammates, but your own grenade can still kill you.
+      if (!self && isTeamMode(this.mode) && victim.team === gd.ownerTeam) continue
       const chest = chestPoint(victim.x, victim.y, victim.z, stanceOf(victim), victim.yaw)
       const d = dist3(pos, chest)
       if (d >= radius) continue
@@ -1311,10 +1349,11 @@ export class DustlineRoom extends Room {
           tickBot(this, p, meta, dt, now)
           p.mt = now - this.t0
         }
-      } else if (p.state === DEAD && playing && now >= meta.respawnAt) {
+      } else if (p.state === DEAD && now >= meta.respawnAt && (this.snd?.on ? this.state.roundPhase === ROUND.FREEZE : playing)) {
         this.spawnPlayer(p)
       }
     }
+    this.snd?.tick(dt, now)
 
     for (const s of this.state.smokes.values()) {
       s.remaining -= dt
@@ -1331,8 +1370,12 @@ export class DustlineRoom extends Room {
         meta.matchSeconds = (meta.matchSeconds ?? 0) + 1
         if (meta.matchSeconds % 60 === 0) this.awardXp(p, XP.minute, 'time')
       }
-      this.state.timeLeft = Math.max(0, this.state.timeLeft - 1)
-      if (this.state.timeLeft === 0) this.endMatch()
+      // Search & Destroy's clock is each round's.
+      if (this.snd) this.snd.everySecond()
+      else {
+        this.state.timeLeft = Math.max(0, this.state.timeLeft - 1)
+        if (this.state.timeLeft === 0) this.endMatch()
+      }
     } else if (this.state.phase === 'ended') {
       this.state.restartIn = Math.max(0, this.state.restartIn - 1)
       // Draining: no next match here; the results were shown, now move on.
@@ -1355,7 +1398,8 @@ export class DustlineRoom extends Room {
   }
 
   checkScoreLimit() {
-    if (this.state.phase !== 'playing') return
+    // Search & Destroy is won on rounds (game/searchDestroy.js).
+    if (this.state.phase !== 'playing' || this.snd) return
     const limit = this.state.scoreLimit
     if (this.mode === 'tdm') {
       if (this.state.scoreAlpha >= limit || this.state.scoreBravo >= limit) this.endMatch()
@@ -1381,7 +1425,7 @@ export class DustlineRoom extends Room {
     s.phase = 'ended'
     s.restartIn = MATCH_END_DURATION
     const ranking = this.ranking()
-    if (this.mode === 'tdm') {
+    if (isTeamMode(this.mode)) {
       s.winner = s.scoreAlpha === s.scoreBravo ? 'draw' : s.scoreAlpha > s.scoreBravo ? TEAMS.ALPHA : TEAMS.BRAVO
     } else {
       s.winner = ranking[0]?.id ?? ''
@@ -1415,7 +1459,7 @@ export class DustlineRoom extends Room {
     }
 
     // Re-balance humans before the new match: newest joiners move first.
-    if (this.mode === 'tdm') {
+    if (isTeamMode(this.mode)) {
       for (;;) {
         const a = this.humansOn(TEAMS.ALPHA)
         const b = this.humansOn(TEAMS.BRAVO)
@@ -1433,9 +1477,12 @@ export class DustlineRoom extends Room {
     s.phase = 'playing'
     for (const p of s.players.values()) {
       if (p.state === SELECTING) continue
-      if (p.isBot) this.spawnPlayer(p)
-      else p.state = DEPLOYING
+      // Search & Destroy: the bots spawn with round 1, players from the class screen.
+      if (!p.isBot) p.state = DEPLOYING
+      else if (this.snd) p.state = DEAD
+      else this.spawnPlayer(p)
     }
+    if (this.snd) this.snd.resetMatch()
     this.broadcast('match_reset', {})
   }
 }

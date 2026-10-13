@@ -15,17 +15,56 @@ export const SERVER_MOVING_CODE = 4100
 /** Length of private-room join keys. */
 export const ROOM_CODE_LENGTH = 6
 
-export const MODES = Object.freeze({ TDM: 'tdm', FFA: 'ffa' })
-export const MODE_LABELS = Object.freeze({ tdm: 'TEAM DEATHMATCH', ffa: 'FREE FOR ALL' })
+export const MODES = Object.freeze({ TDM: 'tdm', FFA: 'ffa', SND: 'snd' })
+export const MODE_LABELS = Object.freeze({ tdm: 'TEAM DEATHMATCH', ffa: 'FREE FOR ALL', snd: 'SEARCH & DESTROY' })
+/** Modes played Alpha vs Bravo (team select, no friendly fire, team scores). */
+export const isTeamMode = (mode) => mode === 'tdm' || mode === 'snd'
 
 export const TEAMS = Object.freeze({ ALPHA: 'alpha', BRAVO: 'bravo' })
 export const TEAM_LABELS = Object.freeze({ alpha: 'ALPHA', bravo: 'BRAVO' })
 
-/** Per-mode match rules. Time limits are in seconds. */
+/**
+ * Per-mode match rules. Time limits are in seconds. In Search & Destroy the
+ * score is rounds won and the time limit is each round's.
+ */
 export const MATCH_RULES = Object.freeze({
   tdm: { scoreLimit: 50, timeLimit: 600, botFill: 8, teamSize: 4 },
   ffa: { scoreLimit: 25, timeLimit: 600, botFill: 6, teamSize: 8 },
+  snd: { scoreLimit: 4, timeLimit: 120, botFill: 8, teamSize: 4 },
 })
+
+/**
+ * Search & Destroy. One life a round. The attackers carry a bomb to site A or
+ * B and plant it; the defenders stop them, or defuse it. Times in seconds,
+ * distances in metres.
+ */
+export const SND = Object.freeze({
+  roundsToWin: 4,
+  roundTime: 120,
+  /** Everyone spawned and frozen in place before the round goes live. */
+  freezeTime: 5,
+  /** The round's result on screen before the next one. */
+  roundEndDelay: 6,
+  /** Attack and defence swap after this many rounds (and every as many again). */
+  swapEvery: 3,
+  /** Joining after the round goes live: still spawn within this long. */
+  joinGrace: 10,
+  plantTime: 4,
+  defuseTime: 6,
+  bombTime: 40,
+  /** Plant anywhere this close to a site's centre. */
+  siteRadius: 3,
+  /** Defuse from this close to the bomb. */
+  defuseRange: 1.8,
+  /** Attackers pick up a dropped bomb by walking over it. */
+  pickupRange: 1.4,
+  /** The blast kills everyone within killRadius, and hurts those in the open out to blastRadius. */
+  killRadius: 9,
+  blastRadius: 16,
+})
+
+/** Round phases in Search & Destroy ('' in the other modes). */
+export const ROUND = Object.freeze({ FREEZE: 'freeze', LIVE: 'live', PLANTED: 'planted', OVER: 'over' })
 
 export const RESPAWN_DELAY = 5
 export const TEAM_SELECT_TIMEOUT = 15

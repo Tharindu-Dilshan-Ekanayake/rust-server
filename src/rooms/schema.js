@@ -98,6 +98,29 @@ export const DustlineState = schema(
     winner: t.string().default(''),
     mvp: t.string().default(''),
     restartIn: t.uint8().default(0),
+    /* Search & Destroy ('' / 0 in the other modes). */
+    round: t.uint8().default(0),
+    /** freeze | live | planted | over (see ROUND). */
+    roundPhase: t.string().default(''),
+    /** Team attacking this round. */
+    attackers: t.string().default(''),
+    /** carried | dropped | planted | defused | exploded | '' */
+    bombState: t.string().default(''),
+    bombCarrier: t.string().default(''),
+    /** Site it was planted on: 'A' | 'B'. */
+    bombSite: t.string().default(''),
+    bombX: t.float32().default(0),
+    bombY: t.float32().default(0),
+    bombZ: t.float32().default(0),
+    /** Seconds until it goes off, once planted. */
+    bombLeft: t.float32().default(0),
+    /** Someone planting or defusing: 'plant' | 'defuse' | '', who, and how far along (0..1). */
+    action: t.string().default(''),
+    actionBy: t.string().default(''),
+    actionProgress: t.float32().default(0),
+    /** The last round's result: winning team, and why (eliminated | time | detonated | defused). */
+    roundWinner: t.string().default(''),
+    roundWhy: t.string().default(''),
     players: t.map(PlayerState),
     grenades: t.map(GrenadeState),
     smokes: t.map(SmokeState),
