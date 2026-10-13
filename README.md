@@ -1,10 +1,10 @@
 # Modern Guns — game server
 
 Authoritative [Colyseus 0.18](https://colyseus.io) server for **Modern Guns**, an 8-player
-FPS (Team Deathmatch, Free-for-all and Search & Destroy) on three maps, *Palmwood*, *Atomic Acres*
-and *Dustline Pumpstation*. The client lives in `../rust-client`.
+FPS (Team Deathmatch, Free-for-all and Search & Destroy) on four maps, *Hollow Creek*, *Palmwood*,
+*Atomic Acres* and *Dustline Pumpstation*. The client lives in `../rust-client`.
 
-Rooms are created with a `map` option (`palmwood`, `acres` or `dustline`, see
+Rooms are created with a `map` option (`hollow`, `palmwood`, `acres` or `dustline`, see
 `src/shared/maps.js`) and matchmaking filters on mode and map. A client that
 doesn't send one (from before maps) gets Dustline. Each room builds its own
 Rapier world from its map; the bot nav graph is built once per map.
@@ -176,6 +176,6 @@ npm run test:private    # private rooms: keys, join by key, caps, bots on/off
 npm run test:fall       # fall damage: hops/stairs free, 5 m landing hurts, tower kills
 npm run test:arsenal    # rocket kill credited to the launcher, shotgun pellets = one hit, kill XP
 npm run test:drain      # deploy drain: warm-up moved on at once, match finishes, then everyone moves
-npm run test:snd        # Search & Destroy with bots: plants, defuses, drops, side swap, match to 4 (MAP=palmwood, SECONDS=420)
+npm run test:snd        # Search & Destroy with bots: plants, defuses, drops, side swap, match to 4 (MAP=hollow|palmwood|acres|dustline, SECONDS=420)
 npm run test:load       # CPU / lag / memory with 1, 2, 4 full rooms (STEPS=1,2,4,6, MAP=acres)
 ```

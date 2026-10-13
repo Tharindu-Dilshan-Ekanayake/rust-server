@@ -395,7 +395,7 @@ export function roofSlabs(h) {
   return [-1, 1].map((s) => ({ ...rampBox([cx, r.ridge, cz], [cx + s * (halfW + o), low, cz], width, 0.16), side: s, low, ridge: r.ridge }))
 }
 
-function houseColliders(h) {
+export function houseColliders(h) {
   const out = houseWallBoxes(h).map((b) => boxC(b.p, b.size))
   const top = h.floors[h.floors.length - 1]
   // Upper floor slabs.
@@ -876,6 +876,8 @@ export const CAR_MODELS = Object.freeze({
   coupe: { w: 1.95, body: [0.3, 0.98], length: 5.0, cabin: [-0.2, 1.5], cabinTop: 1.45, cabinW: 1.7 },
   sedan: { w: 1.9, body: [0.32, 1.0], length: 4.9, cabin: [-0.7, 1.3], cabinTop: 1.52, cabinW: 1.72 },
   pickup: { w: 1.95, body: [0.42, 1.12], length: 5.2, cabin: [-1.0, 0.4], cabinTop: 1.85, cabinW: 1.8, bed: true },
+  /** Hollow Creek's van: cab windows up front, a panelled box behind. */
+  van: { w: 2.0, body: [0.36, 1.08], length: 5.0, cabin: [-1.85, 2.45], cabinTop: 2.12, cabinW: 1.94, van: true },
 })
 
 function carColliders(e) {
