@@ -6,6 +6,7 @@
  */
 import * as dustline from './map.js'
 import * as acres from './mapAcres.js'
+import * as hollow from './mapHollow.js'
 import * as palmwood from './mapPalmwood.js'
 
 export const MAPS = Object.freeze({
@@ -58,7 +59,6 @@ export const MAPS = Object.freeze({
     tagline: 'Tropical plywood shanty town',
     blurb: 'A plywood shanty town in the palms. A dirt loop round the unfinished Frame, market stalls, a warehouse, and two lookout towers.',
     size: '76 × 76 m',
-    isNew: true,
     half: palmwood.PALMWOOD_HALF,
     entities: palmwood.PALMWOOD_ENTITIES,
     colliders: palmwood.buildPalmwoodColliders,
@@ -72,10 +72,30 @@ export const MAPS = Object.freeze({
     // Attackers from the north yard; sites in the boat yard (west) and the crate yard (east).
     snd: { attack: 'alpha', sites: [{ id: 'A', p: [-25, 0, 16] }, { id: 'B', p: [25, 0, 15.5] }] },
   }),
+  hollow: Object.freeze({
+    id: 'hollow',
+    name: hollow.HOLLOW_NAME,
+    tagline: 'A small town on Halloween night',
+    blurb: 'Halloween night in a small town. A witch statue on the roundabout, a church and its graveyard, a creek, and a barn and a watchtower on fire.',
+    size: '80 × 80 m',
+    isNew: true,
+    half: hollow.HOLLOW_HALF,
+    entities: hollow.HOLLOW_ENTITIES,
+    colliders: hollow.buildHollowColliders,
+    ladders: hollow.HOLLOW_LADDERS,
+    ladderAt: hollow.hollowLadderAt,
+    spawns: hollow.HOLLOW_SPAWNS,
+    ammoCrates: hollow.HOLLOW_AMMO,
+    nav: hollow.HOLLOW_NAV,
+    killY: -5,
+    maxY: 16,
+    // Attackers from the west; sites in the graveyard (north) and the barn yard (south).
+    snd: { attack: 'alpha', sites: [{ id: 'A', p: [8.8, 0, -30.4] }, { id: 'B', p: [7.5, 0, 21.8] }] },
+  }),
 })
 
 /** Order maps are listed in the menus. */
-export const MAP_IDS = Object.freeze(['palmwood', 'acres', 'dustline'])
+export const MAP_IDS = Object.freeze(['hollow', 'palmwood', 'acres', 'dustline'])
 /** What a new player starts on. */
 export const DEFAULT_MAP = 'acres'
 /** What a room opens on when the client didn't say (clients from before maps). */
