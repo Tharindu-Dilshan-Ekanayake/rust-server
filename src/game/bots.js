@@ -8,7 +8,7 @@
  * easy going: slow to spot you and turn, loose with its aim, and warming up over
  * the first moments of a fight, so a player who sees it first wins.
  */
-import { eyeHeightFor, PLAYER, stanceOf, WALK_GROUPS } from '../shared/constants.js'
+import { eyeHeightFor, PLAYER, ROUND, SND, stanceOf, WALK_GROUPS } from '../shared/constants.js'
 import { chestPoint, headPoint } from '../shared/hitbox.js'
 import { angleDelta, clamp } from '../shared/math.js'
 import { effectiveWeapon, EQUIPMENT, WEAPONS } from '../shared/weapons.js'
@@ -87,6 +87,16 @@ export function createBotBrain() {
     meleeReadyAt: 0,
     aimNoiseYaw: 0,
     aimNoisePitch: 0,
+    /** Search & Destroy: the site this bot holds when defending, and the bomb's state it last planned for. */
+    defendSite: 'A',
+    sndKey: '',
+    /** Walking straight at an exact goal hit something: follow the path instead until then. */
+    directBlockedUntil: 0,
+    /** seesGoal's cached answer, and when to ask again. */
+    goalLine: false,
+    goalLineAt: 0,
+    /** The objective point the current path was planned for. */
+    planFor: null,
   }
 }
 
@@ -100,9 +110,110 @@ export function resetBotBrain(brain, cls) {
   brain.reloadUntil = 0
   brain.mag = effectiveWeapon(cls.primary, cls.primaryAtt).magSize
   brain.grenadeReadyAt = Date.now() + TUNING.grenadeFirst + Math.random() * 10000
+  brain.defendSite = Math.random() < 0.5 ? 'A' : 'B'
+  brain.sndKey = ''
+  brain.directBlockedUntil = 0
+}
+
+/* ---------------------------------------------------------------------------
+ * Search & Destroy: what a bot is after (game/searchDestroy.js)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Where this bot wants to be: { p, near, exact } — a point, how close is close
+ * enough, and whether to walk right up to it (to plant, defuse or pick the bomb
+ * up) rather than just into the area. Null outside a live round.
+ */
+function sndGoal(room, p, b) {
+  const snd = room.snd
+  if (!snd?.on || !snd.fighting()) return null
+  const s = room.state
+  const bomb = [s.bombX, s.bombY, s.bombZ]
+  if (p.team === s.attackers) {
+    if (s.bombState === 'carried' && s.bombCarrier === p.id) return { p: snd.site(snd.botSite).p, near: 1.6, exact: true }
+    if (s.bombState === 'carried') {
+      // Someone else has it (a bot or a player): stay round them, and once
+      // they're closing on a site, get there and clear it.
+      const c = s.players.get(s.bombCarrier)
+      if (c) {
+        const site = snd.sites().find((st) => Math.hypot(st.p[0] - c.x, st.p[2] - c.z) < 18)
+        if (site) return { p: site.p, near: 8, follow: true }
+        // A few metres ahead of them, the way they're facing (where they're headed).
+        return { p: [c.x - Math.sin(c.yaw) * 5, c.y, c.z - Math.cos(c.yaw) * 5], near: 5, follow: true }
+      }
+    }
+    if (s.bombState === 'dropped') {
+      // The attacker bot nearest the bomb fetches it; the rest close in round it.
+      let nearest = null
+      let best = Infinity
+      for (const o of s.players.values()) {
+        if (!o.isBot || o.state !== 'alive' || o.team !== s.attackers) continue
+        const d = Math.hypot(o.x - bomb[0], o.z - bomb[2])
+        if (d < best) {
+          best = d
+          nearest = o
+        }
+      }
+      return nearest === p ? { p: bomb, near: 0.5, exact: true, grab: true } : { p: bomb, near: 7 }
+    }
+    if (s.bombState === 'planted') return { p: bomb, near: 7 }
+    return { p: snd.site(snd.botSite).p, near: 8 }
+  }
+  if (s.bombState === 'planted') return { p: bomb, near: SND.defuseRange - 0.5, exact: true }
+  return { p: snd.site(b.defendSite).p, near: 7 }
+}
+
+/** A nav node to head for: the one nearest the goal, or any within its `near` radius. */
+function sndGoalNode(room, goal) {
+  const graph = room.nav
+  if (goal.exact) return nearestNode(graph, room.mapWorld, goal.p)
+  const pool = []
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const n = graph.nodes[i]
+    if (Math.hypot(n[0] - goal.p[0], n[2] - goal.p[2]) <= goal.near && Math.abs(n[1] - goal.p[1]) < 1.5) pool.push(i)
+  }
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : nearestNode(graph, room.mapWorld, goal.p, false)
+}
+
+/**
+ * Plant or defuse when standing on the spot with nobody in sight: holds Use
+ * for the room and keeps still. Returns true while doing it.
+ */
+function sndUse(room, p, b) {
+  const snd = room.snd
+  if (!snd?.on) return false
+  const s = room.state
+  let want = false
+  if (!b.hasLine) {
+    if (s.roundPhase === ROUND.LIVE && s.bombState === 'carried' && s.bombCarrier === p.id && snd.siteAt(p.x, p.y, p.z)) want = true
+    if (s.roundPhase === ROUND.PLANTED && p.team !== s.attackers && Math.hypot(p.x - s.bombX, p.y - s.bombY, p.z - s.bombZ) <= SND.defuseRange - 0.2) want = true
+  }
+  snd.onUse(p, want)
+  return want
 }
 
 const eyeOf = (p) => [p.x, p.y + eyeHeightFor(stanceOf(p)), p.z]
+
+/**
+ * Search & Destroy: keep going for the objective with an enemy in sight? Grabbing
+ * the bomb lying just there, yes. Carrying, fetching or defusing it, unless the
+ * enemy is close. Anything else, only when the enemy is far off (a long-range
+ * standoff would otherwise eat the round).
+ */
+function objectiveFirst(p, goal, targetDist) {
+  if (!goal) return false
+  if (goal.grab && Math.hypot(goal.p[0] - p.x, goal.p[2] - p.z) < 8) return true
+  return targetDist > (goal.exact ? 15 : 30)
+}
+
+/** Nothing between the bot and a goal on the ground (checked a few times a second). */
+function seesGoal(room, p, b, g, now) {
+  if (now >= b.goalLineAt) {
+    b.goalLineAt = now + 300
+    b.goalLine = room.mapWorld.clearLine([p.x, p.y + 0.6, p.z], [g[0], g[1] + 0.6, g[2]], 0, WALK_GROUPS)
+  }
+  return b.goalLine
+}
 
 function think(room, p, meta, now) {
   const b = meta.bot
@@ -188,6 +299,18 @@ function planPath(room, p, meta, now) {
   const graph = room.nav
   const start = nearestNode(graph, room.mapWorld, [p.x, p.y, p.z])
   let goal = -1
+  // Search & Destroy: the objective first (the carrier and anyone fetching or
+  // defusing always; the others most of the time, hunting otherwise).
+  const obj = sndGoal(room, p, b)
+  if (obj && (obj.exact || !(b.lastKnown && now - b.lastKnownAt < 6000) || Math.random() < 0.6)) {
+    const path = findPath(graph, start, sndGoalNode(room, obj))
+    if (path && (path.length > 1 || Math.hypot(obj.p[0] - p.x, obj.p[2] - p.z) < 4)) {
+      b.path = path
+      b.pathIdx = 0
+      b.planFor = obj.p
+      return
+    }
+  }
   if (b.lastKnown && now - b.lastKnownAt < 6000) {
     goal = nearestNode(graph, room.mapWorld, b.lastKnown, false)
   } else if (Math.random() < 0.55) {
@@ -242,6 +365,20 @@ export function tickBot(room, p, meta, dt, now) {
     think(room, p, meta, now)
   }
 
+  // Search & Destroy: a new plan whenever the bomb changes hands or goes down.
+  if (room.snd?.on) {
+    const s = room.state
+    const key = `${s.roundPhase}:${s.bombState}:${s.bombCarrier}`
+    if (key !== b.sndKey) {
+      b.sndKey = key
+      b.path = null
+    }
+  }
+  const using = sndUse(room, p, b)
+  const goal = using ? null : sndGoal(room, p, b)
+  // Keeping up with the carrier: a new path once they've moved on from the one planned.
+  if (goal?.follow && b.path && b.planFor && Math.hypot(goal.p[0] - b.planFor[0], goal.p[2] - b.planFor[2]) > 6) b.path = null
+
   const weapon = effectiveWeapon(meta.activeClass.primary, meta.activeClass.primaryAtt)
   const flashed = now < b.flashedUntil
   const target = b.target ? room.state.players.get(b.target) : null
@@ -270,7 +407,9 @@ export function tickBot(room, p, meta, dt, now) {
   let speed = PLAYER.walkSpeed * weapon.moveMultiplier * 0.92
   let followingPath = false
 
-  if (flashed) {
+  if (using) {
+    // Planting or defusing: stand still.
+  } else if (flashed) {
     if (now >= b.strafeUntil) {
       b.strafeDir = Math.random() * Math.PI * 2
       b.strafeUntil = now + 400 + Math.random() * 500
@@ -279,6 +418,9 @@ export function tickBot(room, p, meta, dt, now) {
     moveZ = Math.cos(b.strafeDir)
     speed *= 0.6
     wantYaw = p.yaw + (Math.random() - 0.5) * 0.6
+  } else if (targetAlive && b.hasLine && objectiveFirst(p, goal, targetDist)) {
+    // Search & Destroy: the job comes first; it keeps shooting on the move.
+    followingPath = true
   } else if (targetAlive && b.hasLine) {
     const chase = weapon.id === 'ar' && targetDist > 26
     const close = targetDist < 2.6
@@ -304,6 +446,32 @@ export function tickBot(room, p, meta, dt, now) {
     }
   } else {
     followingPath = true
+  }
+
+  // The last stretch to the bomb or the site's centre: straight there, then
+  // stop. That's the last few metres, or from the end of the path (the node
+  // nearest the goal can stand a way off) when nothing's in between. If
+  // something is in the way (or it isn't getting closer), back to the path.
+  const exactGoal = followingPath && goal?.exact && now >= b.directBlockedUntil ? goal : null
+  const toGoal = exactGoal ? Math.hypot(exactGoal.p[0] - p.x, exactGoal.p[2] - p.z) : Infinity
+  const pathEnd = !b.path || b.pathIdx >= b.path.length - 1
+  let direct = false
+  if (exactGoal && (toGoal < 4 || (pathEnd && toGoal < 15 && seesGoal(room, p, b, exactGoal.p, now)))) {
+    followingPath = false
+    if (toGoal > exactGoal.near) {
+      direct = true
+      moveX = exactGoal.p[0] - p.x
+      moveZ = exactGoal.p[2] - p.z
+      if (!targetAlive) wantYaw = Math.atan2(-moveX, -moveZ)
+      if (now >= b.stuckCheckAt) {
+        if (b.stuckPos && Math.hypot(p.x - b.stuckPos[0], p.z - b.stuckPos[1]) < 0.4) {
+          b.directBlockedUntil = now + 2500
+          b.path = null
+        }
+        b.stuckPos = [p.x, p.z]
+        b.stuckCheckAt = now + 2000
+      }
+    }
   }
 
   if (followingPath) {
@@ -333,16 +501,24 @@ export function tickBot(room, p, meta, dt, now) {
     }
   }
 
+  // Search & Destroy: with nobody to fight, run to the objective (or to catch up with the carrier).
+  const hurry = Boolean(followingPath && !targetAlive && goal && Math.hypot(goal.p[0] - p.x, goal.p[2] - p.z) > 10)
+  if (hurry) speed *= PLAYER.sprintMultiplier
+
   const ml = Math.hypot(moveX, moveZ)
   let moving = false
   if (ml > 1e-4) {
     const s = Math.min(speed * dt, ml)
-    const ok = step(room, p, (moveX / ml) * s, (moveZ / ml) * s, followingPath)
+    const ok = step(room, p, (moveX / ml) * s, (moveZ / ml) * s, followingPath || direct)
+    if (!ok && direct) {
+      b.directBlockedUntil = now + 2500
+      b.path = null
+    }
     if (!ok && !followingPath) b.strafeDir = -b.strafeDir
     if (!ok && followingPath) b.path = null
     moving = ok
   }
-  p.sprint = false
+  p.sprint = hurry && moving
   p.ads = Boolean(targetAlive && b.hasLine && !flashed && targetDist > 12)
 
   // Turn toward the wanted aim at a capped rate.

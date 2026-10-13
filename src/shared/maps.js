@@ -1,7 +1,8 @@
 /**
  * Every map in the game, by id. A map is the data both sides need to play on it:
- * its colliders, ladders, spawns, resupply crates, the bot navigation hints and
- * its bounds. The client also draws its `entities` (see world/MapScene.jsx).
+ * its colliders, ladders, spawns, resupply crates, the bot navigation hints, its
+ * bounds and its Search & Destroy layout (`snd`: which team spawns attack, and
+ * bomb sites A and B). The client also draws its `entities` (see world/MapScene.jsx).
  */
 import * as dustline from './map.js'
 import * as acres from './mapAcres.js'
@@ -29,6 +30,8 @@ export const MAPS = Object.freeze({
     },
     killY: dustline.KILL_Y,
     maxY: 16,
+    // Search & Destroy: attackers start from the north-west, sites at the camo-net nest and by the truck.
+    snd: { attack: 'alpha', sites: [{ id: 'A', p: [14, 0, -3.9] }, { id: 'B', p: [-4, 0, 24] }] },
   }),
   acres: Object.freeze({
     id: 'acres',
@@ -46,6 +49,8 @@ export const MAPS = Object.freeze({
     nav: acres.ACRES_NAV,
     killY: -5,
     maxY: 16,
+    // Attackers from the west backyards; sites on the orange house's lawn and by the pool.
+    snd: { attack: 'alpha', sites: [{ id: 'A', p: [16, 0, -18] }, { id: 'B', p: [12, 0, 20] }] },
   }),
   palmwood: Object.freeze({
     id: 'palmwood',
@@ -64,6 +69,8 @@ export const MAPS = Object.freeze({
     nav: palmwood.PALMWOOD_NAV,
     killY: -5,
     maxY: 16,
+    // Attackers from the north yard; sites in the boat yard (west) and the crate yard (east).
+    snd: { attack: 'alpha', sites: [{ id: 'A', p: [-25, 0, 16] }, { id: 'B', p: [25, 0, 15.5] }] },
   }),
 })
 

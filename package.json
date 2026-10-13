@@ -12,7 +12,8 @@
     "test:private": "node scripts/private-test.js",
     "test:fall": "node scripts/fall-test.js",
     "test:arsenal": "node scripts/arsenal-test.js",
-    "test:drain": "node scripts/drain-test.js"
+    "test:drain": "node scripts/drain-test.js",
+    "test:snd": "node scripts/snd-test.js"
   },
   "keywords": [],
   "author": "",

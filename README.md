@@ -1,7 +1,7 @@
 # Modern Guns — game server
 
 Authoritative [Colyseus 0.18](https://colyseus.io) server for **Modern Guns**, an 8-player
-FPS (Team Deathmatch and Free-for-all) on three maps, *Palmwood*, *Atomic Acres*
+FPS (Team Deathmatch, Free-for-all and Search & Destroy) on three maps, *Palmwood*, *Atomic Acres*
 and *Dustline Pumpstation*. The client lives in `../rust-client`.
 
 Rooms are created with a `map` option (`palmwood`, `acres` or `dustline`, see
@@ -60,12 +60,53 @@ What the server does for Legion:
 | Rooms, matchmaking (`dustline`, filtered by `mode`, max 8 humans) | `src/server.js`, `src/rooms/DustlineRoom.js` |
 | Synced state (players, grenades, smokes, ammo boxes, scores) | `src/rooms/schema.js` |
 | Map collision (Rapier), grenade physics, bot nav graph | `src/game/physics.js` |
-| Bots (fill empty slots, see/hear, strafe, burst fire, throw frags, get flashed, blind in smoke) | `src/game/bots.js` |
+| Bots (fill empty slots, see/hear, strafe, burst fire, throw frags, get flashed, blind in smoke; plant, guard, defuse) | `src/game/bots.js` |
+| Search & Destroy: rounds, sides, the bomb | `src/game/searchDestroy.js` |
 | Gameplay rules shared with the client | `src/shared/*` |
 
 `src/shared` is the **source of truth** for weapons, the map, hitboxes and
 constants. The client copies it on `npm run dev` / `npm run build`
 (`rust-client/scripts/sync-shared.mjs`), so edit it here.
+
+## Search & Destroy
+
+`mode: 'snd'` (`src/game/searchDestroy.js`; the numbers are `SND` in
+`shared/constants.js`, each map's sites are `snd` in `shared/maps.js`):
+4 v 4, one life a round, first side to 4 rounds.
+
+- A round: a 5 s **freeze** (everyone spawned on their side, moves past 1.2 m are
+  corrected), then 2 minutes **live**. The bomb starts on the ground a few metres
+  in front of the attackers' (`state.attackers`) spawn (`bombStart`: out from the
+  middle of their spawns toward the middle of the map, on a nav node); nobody can
+  take it in the freeze, and the first attacker to reach it once the round is live
+  carries it. Holding Use (`use {on}`) for 4 s inside a site's 3 m ring plants it
+  on A or B. It goes off 40 s later (kills within 9 m, hurts out to 16 m where there's
+  a clear line, credited to the planter). A defender within 1.8 m holding Use for
+  6 s defuses it. Stepping 0.8 m off the spot starts the count again.
+- A round ends on **elimination** (every defender; every attacker before a
+  plant), **detonated**, **defused**, or **time** (the defenders held). Sides
+  swap every 3 rounds. A round only scores while a person is playing; bots
+  alone replay it, and the first person to deploy into a room of bots gets a
+  fresh round.
+- The carrier dying (or leaving) drops the bomb where they were; an attacker
+  walking over it picks it up. Bots: the nearest attacker bot runs for a bomb on
+  the ground (even mid-fight once it's close); a bot carrier takes it to its
+  chosen site and plants when no enemy is in sight; the other attackers escort
+  whoever has it, bot or player (a few metres ahead of them, then clearing the
+  site they're closing on); they guard a planted bomb and defenders go to defuse
+  it. With nobody to fight they run, and a far-off enemy doesn't hold them up.
+- No respawns in a round. Deploying during the freeze or the first 10 s puts you
+  in; later you're sent `snd {e: 'wait'}` and spawn with everyone next round.
+- XP: plant 150, defuse 200, round win 100 (everyone on the winning side).
+- State: `round`, `roundPhase` (`freeze` / `live` / `planted` / `over`, `''` in
+  a private room's warm-up), `attackers`, `bombState` (`carried` / `dropped` /
+  `planted` / `defused` / `exploded`), `bombCarrier`, `bombSite`, `bombX/Y/Z`,
+  `bombLeft`, `action` / `actionBy` / `actionProgress` (who is planting or
+  defusing, 0..1), `roundWinner`, `roundWhy`. `scoreAlpha` / `scoreBravo` count rounds.
+- Events, message `snd` with `e`: `round {round, attackers}`, `live`, `swap`,
+  `planted {site, by, p}`, `defused {by}`, `dropped {p}`, `pickup {by}`,
+  `end {winner, why, a, b, counted}`, `wait`. The blast is an `explosion` with
+  `k: 'bomb'`, and its kills a `kill` with weapon `bomb`.
 
 ## Anti-cheat model
 
@@ -107,12 +148,12 @@ the host (`state.host`) sends `start_match` to reset scores and start the clock.
 
 Client → server: `choose_team {team|'auto'}`, `set_class {classData}`,
 `spawn_request {classData?}`, `m` (movement + stance flags: crouch, ADS, sprint, climb, prone, slide; 20 Hz), `fire`, `sw` (switch),
-`rl` (reload), `ml` (melee), `th` (throw), `avatar`, `rank {r}`, `pong`.
+`rl` (reload), `ml` (melee), `th` (throw), `use {on}` (hold to plant / defuse), `avatar`, `rank {r}`, `pong`.
 
 Server → client: `welcome`, `team_select`, `team_assigned`, `team_denied`,
 `team_moved`, `spawn {p, yaw, classData, ammo}`, `correct`, `shot`, `hit`,
 `damaged`, `kill`, `melee`, `explosion`, `flash`, `ammo`, `class_ack`,
-`match_end`, `match_reset`, `notice {text, ms}` (e.g. the drain warning), `xp {n, why}`, `act` (another player reloading or throwing, for their animation), `ping`. Room state replaces a `room_state` message.
+`match_end`, `match_reset`, `snd {e, ...}` (Search & Destroy, above), `notice {text, ms}` (e.g. the drain warning), `xp {n, why}`, `act` (another player reloading or throwing, for their animation), `ping`. Room state replaces a `room_state` message.
 A `shot` carries `q: true` when suppressed (clients play it quietly and skip the
 minimap ping), and each player's `kit` string in state lists their weapons and
 attachments so others render the right guns.
@@ -122,7 +163,7 @@ attachments so others render the right guns.
 `shared/progression.js` holds the 16 ranks (Private → General) and the XP table;
 every weapon is open to everyone. The server awards XP as it happens (`xp`
 message: kill, headshot, knife, longshot, revenge, every minute played, match
-complete, win, MVP); the client keeps the running total and reports its rank
+complete, win, MVP; in Search & Destroy also plant, defuse and round won); the client keeps the running total and reports its rank
 (join option `rank`, then `rank` messages) so scoreboards can show insignia.
 
 ## Tests
@@ -135,5 +176,6 @@ npm run test:private    # private rooms: keys, join by key, caps, bots on/off
 npm run test:fall       # fall damage: hops/stairs free, 5 m landing hurts, tower kills
 npm run test:arsenal    # rocket kill credited to the launcher, shotgun pellets = one hit, kill XP
 npm run test:drain      # deploy drain: warm-up moved on at once, match finishes, then everyone moves
+npm run test:snd        # Search & Destroy with bots: plants, defuses, drops, side swap, match to 4 (MAP=palmwood, SECONDS=420)
 npm run test:load       # CPU / lag / memory with 1, 2, 4 full rooms (STEPS=1,2,4,6, MAP=acres)
 ```

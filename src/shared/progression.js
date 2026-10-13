@@ -39,6 +39,10 @@ export const XP = Object.freeze({
   matchComplete: 150,
   matchWin: 400,
   mvp: 200,
+  /** Search & Destroy. */
+  plant: 150,
+  defuse: 200,
+  roundWin: 100,
 })
 
 /** Kills from this far (metres) and beyond count as long shots. */
