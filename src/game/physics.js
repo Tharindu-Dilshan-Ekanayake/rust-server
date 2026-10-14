@@ -30,7 +30,9 @@ export class MapWorld {
       const desc =
         c.shape === 'box'
           ? RAPIER.ColliderDesc.cuboid(c.half[0], c.half[1], c.half[2])
-          : RAPIER.ColliderDesc.cylinder(c.halfHeight, c.r)
+          : c.shape === 'mesh'
+            ? RAPIER.ColliderDesc.trimesh(c.vertices, c.indices)
+            : RAPIER.ColliderDesc.cylinder(c.halfHeight, c.r)
       desc
         .setTranslation(c.p[0], c.p[1], c.p[2])
         .setRotation({ x: c.q[0], y: c.q[1], z: c.q[2], w: c.q[3] })
@@ -159,9 +161,11 @@ function corridorClear(mapWorld, a, b) {
  * Ground nodes come from a grid laid over the map, keeping only points where the
  * floor is near ground level and a bot fits; hand-placed extras fill doorways and
  * narrow gaps. Ground nodes link to their neighbours when a bot-wide corridor is
- * clear. Elevated routes (stairs, tank tops, ramps) come from the map's chains;
- * with `linkUpper`, raised points (upstairs rooms, roofs) also link to each
- * other wherever a bot can walk between them, like the ground does.
+ * clear and the climb between them is small (0.4 m; between grid nodes on a map
+ * whose ground slopes, `nav.climb` per metre). Elevated routes (stairs, tank
+ * tops, ramps) come from the map's chains; with `linkUpper`, raised points
+ * (upstairs rooms, roofs) also link to each other wherever a bot can walk
+ * between them, like the ground does.
  */
 export function getNavGraph(mapWorld) {
   const { id, nav } = mapWorld.map
@@ -182,10 +186,11 @@ export function getNavGraph(mapWorld) {
     links[j].push({ to: i, cost: d })
   }
 
-  const { spacing, half } = nav.grid
+  // `depth`: how far below 1.7 m to look for floor (more for sunken ground, a creek bed).
+  const { spacing, half, depth = 3 } = nav.grid
   for (let x = -half; x <= half + 1e-6; x += spacing) {
     for (let z = -half; z <= half + 1e-6; z += spacing) {
-      const floor = mapWorld.groundY(x, 1.7, z, 3)
+      const floor = mapWorld.groundY(x, 1.7, z, depth)
       if (floor === null || floor > 0.5) continue
       if (standable(mapWorld, x, floor, z)) addNode([x, floor, z], 'grid')
     }
@@ -208,9 +213,11 @@ export function getNavGraph(mapWorld) {
     for (let b = a + 1; b < ground.length; b++) {
       const i = ground[a]
       const j = ground[b]
-      const reach = kinds[i] === 'grid' && kinds[j] === 'grid' ? reachGrid : 4.5
+      const grid = kinds[i] === 'grid' && kinds[j] === 'grid'
+      const reach = grid ? reachGrid : 4.5
       const d = Math.hypot(nodes[i][0] - nodes[j][0], nodes[i][2] - nodes[j][2])
-      if (d > reach || Math.abs(nodes[i][1] - nodes[j][1]) > 0.4) continue
+      const climb = grid && nav.climb ? Math.max(0.4, d * nav.climb) : 0.4
+      if (d > reach || Math.abs(nodes[i][1] - nodes[j][1]) > climb) continue
       if (corridorClear(mapWorld, nodes[i], nodes[j])) link(i, j)
     }
   }

@@ -83,7 +83,8 @@ export function ladderIn(ladders, x, y, z) {
 
 /**
  * @typedef {{shape:'box', p:number[], half:number[], q:number[], group:number}
- *         | {shape:'cyl', p:number[], halfHeight:number, r:number, q:number[], group:number}} ColliderDef
+ *         | {shape:'cyl', p:number[], halfHeight:number, r:number, q:number[], group:number}
+ *         | {shape:'mesh', p:number[], q:number[], vertices:Float32Array, indices:Uint32Array, group:number}} ColliderDef
  */
 
 export function boxC(p, size, q = IDENTITY_Q, group = SOLID) {
@@ -92,6 +93,11 @@ export function boxC(p, size, q = IDENTITY_Q, group = SOLID) {
 
 export function cylC(p, r, h, q = IDENTITY_Q, group = SOLID) {
   return { shape: 'cyl', p, halfHeight: h / 2, r, q, group }
+}
+
+/** A triangle mesh (ground that isn't flat): xyz triples and triangle corner indices, in world space. */
+export function meshC(vertices, indices, group = SOLID) {
+  return { shape: 'mesh', p: [0, 0, 0], q: IDENTITY_Q, vertices: Float32Array.from(vertices), indices: Uint32Array.from(indices), group }
 }
 
 /** Box sitting on `base` (centre of its bottom face), rotated about Y. */

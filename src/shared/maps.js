@@ -6,6 +6,7 @@
  */
 import * as dustline from './map.js'
 import * as acres from './mapAcres.js'
+import * as bramble from './mapBramble.js'
 import * as hollow from './mapHollow.js'
 import * as palmwood from './mapPalmwood.js'
 import * as quarter from './mapQuarter.js'
@@ -103,7 +104,6 @@ export const MAPS = Object.freeze({
     tagline: 'Sun-baked backstreets round a building site',
     blurb: 'Sun-baked backstreets round an unfinished concrete frame. Rooftops, balconies, tin shacks, a bulldozer and Market Street.',
     size: '80 × 80 m',
-    isNew: true,
     half: quarter.QUARTER_HALF,
     entities: quarter.QUARTER_ENTITIES,
     colliders: quarter.buildQuarterColliders,
@@ -117,10 +117,31 @@ export const MAPS = Object.freeze({
     // Attackers from the west; sites in the building site (by the bulldozer) and the courtyard house.
     snd: { attack: 'alpha', sites: [{ id: 'A', p: [8.6, 0, -3.6] }, { id: 'B', p: [2.6, 0, 25.6] }] },
   }),
+  bramble: Object.freeze({
+    id: 'bramble',
+    name: bramble.BRAMBLE_NAME,
+    short: 'Bramblewood',
+    tagline: 'An overgrown farm town',
+    blurb: 'An abandoned farm the woods have taken back. A field of hay bales under the water tower, the barn, a deep dried-up creek with its covered boardwalk and bridge, ivy on every wall.',
+    size: '104 × 104 m',
+    isNew: true,
+    half: bramble.BRAMBLE_HALF,
+    entities: bramble.BRAMBLE_ENTITIES,
+    colliders: bramble.buildBrambleColliders,
+    ladders: bramble.BRAMBLE_LADDERS,
+    ladderAt: bramble.brambleLadderAt,
+    spawns: bramble.BRAMBLE_SPAWNS,
+    ammoCrates: bramble.BRAMBLE_AMMO,
+    nav: bramble.BRAMBLE_NAV,
+    killY: -5,
+    maxY: 18,
+    // Attackers from the west; sites in the corner of the field and the yard of the brick house on the road.
+    snd: { attack: 'alpha', sites: [{ id: 'A', p: [16.0, 0, -28.0] }, { id: 'B', p: [18.6, 0, 26.0] }] },
+  }),
 })
 
 /** Order maps are listed in the menus. */
-export const MAP_IDS = Object.freeze(['quarter', 'hollow', 'palmwood', 'acres', 'dustline'])
+export const MAP_IDS = Object.freeze(['bramble', 'quarter', 'hollow', 'palmwood', 'acres', 'dustline'])
 /** What a new player starts on. */
 export const DEFAULT_MAP = 'acres'
 /** What a room opens on when the client didn't say (clients from before maps). */
