@@ -16,7 +16,7 @@ await RAPIER.init({})
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
 for (const c of buildColliders()) {
   const desc =
-    c.shape === 'box' ? RAPIER.ColliderDesc.cuboid(...c.half) : RAPIER.ColliderDesc.cylinder(c.halfHeight, c.r)
+    c.shape === 'box' ? RAPIER.ColliderDesc.cuboid(...c.half) : c.shape === 'mesh' ? RAPIER.ColliderDesc.trimesh(c.vertices, c.indices) : RAPIER.ColliderDesc.cylinder(c.halfHeight, c.r)
   desc
     .setTranslation(...c.p)
     .setRotation({ x: c.q[0], y: c.q[1], z: c.q[2], w: c.q[3] })
