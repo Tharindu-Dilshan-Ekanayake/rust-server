@@ -125,6 +125,8 @@ export const DustlineState = schema(
     /** The last round's result: winning team, and why (eliminated | time | detonated | defused). */
     roundWinner: t.string().default(''),
     roundWhy: t.string().default(''),
+    /** Breakable glass: which of the map's panes are broken, as hex (see shared/glass.js). */
+    glass: t.string().default(''),
     players: t.map(PlayerState),
     grenades: t.map(GrenadeState),
     smokes: t.map(SmokeState),

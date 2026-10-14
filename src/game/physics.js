@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat'
 
-import { BULLET_GROUPS, GRENADE_GROUPS, interactionGroups, WALK_GROUPS } from '../shared/constants.js'
+import { BULLET_GROUPS, GRENADE_GROUPS, GROUP, interactionGroups, WALK_GROUPS } from '../shared/constants.js'
 import { getMap } from '../shared/maps.js'
 
 let initPromise = null
@@ -42,9 +42,36 @@ export class MapWorld {
       this.world.createCollider(desc)
     }
 
+    // Breakable glass stops walkers and grenades while it's whole (bullets are tested
+    // against it apart: see shared/glass.js); a broken pane's collider goes.
+    this.glass = (map.glass ?? []).map((g) => this.addPane(g))
+
     this._ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })
     // Build the broad-phase now so queries work before the first tick.
     this.world.step()
+  }
+
+  addPane(g) {
+    return this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(g.half[0], g.half[1], g.half[2])
+        .setTranslation(g.p[0], g.p[1], g.p[2])
+        .setRotation({ x: g.q[0], y: g.q[1], z: g.q[2], w: g.q[3] })
+        .setCollisionGroups(interactionGroups(GROUP.MOVE_ONLY, 0xffff)),
+    )
+  }
+
+  /** A pane broke: nothing stops anything there now. */
+  breakPane(i) {
+    const c = this.glass[i]
+    if (!c) return
+    this.world.removeCollider(c, false)
+    this.glass[i] = null
+  }
+
+  /** Every pane whole again (a new match or round). */
+  mendGlass() {
+    const panes = this.map.glass ?? []
+    this.glass = this.glass.map((c, i) => c ?? this.addPane(panes[i]))
   }
 
   step(dt) {
