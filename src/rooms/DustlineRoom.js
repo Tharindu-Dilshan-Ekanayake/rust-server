@@ -25,6 +25,7 @@ import {
   TEAMS,
   WALK_GROUPS,
 } from '../shared/constants.js'
+import { encodeBroken, glassDistance, glassNear, glassRayHit, KNIFE_GLASS_REACH } from '../shared/glass.js'
 import { chestPoint, headPoint, hitboxFor, rayHitbox, raySphere } from '../shared/hitbox.js'
 import { getMap, isMapId, LEGACY_MAP } from '../shared/maps.js'
 import { clamp, dist2, dist3 } from '../shared/math.js'
@@ -161,6 +162,8 @@ export class DustlineRoom extends Room {
     this.state = state
 
     this.mapWorld = new MapWorld(this.map)
+    /** Panes of the map's glass shot out (indices into map.glass). */
+    this.glassBroken = new Set()
     this.nav = getNavGraph(this.mapWorld)
     /** id -> server-only bookkeeping (loadout, ammo, timers, bot brain...). */
     this.meta = new Map()
@@ -350,6 +353,7 @@ export class DustlineRoom extends Room {
 
   /** Grenades, rockets, smoke and dropped ammo cleared away (a new round). */
   clearRoundDebris() {
+    this.mendGlass()
     for (const id of [...this.grenadeBodies.keys()]) this.removeGrenade(id)
     this.clearRockets()
     this.state.smokes.clear()
@@ -534,6 +538,12 @@ export class DustlineRoom extends Room {
     if (!e || dist3(o, e) > w.range) e = [o[0] + d[0] * 60, o[1] + d[1] * 60, o[2] + d[2] * 60]
     let hit = false
     let ends
+    // Glass in the way: the bullet breaks the pane and stops there (the next one goes through).
+    const pane = !w.pellets && this.glassInWay(o, d, Math.min(w.range, dist3(o, e) + 0.06))
+    if (pane) {
+      this.breakGlass([pane.i])
+      e = [o[0] + d[0] * pane.t, o[1] + d[1] * pane.t, o[2] + d[2] * pane.t]
+    }
     if (w.pellets) {
       // Every pellet is checked like a bullet; damage per target is summed so a
       // point-blank blast lands as one hit (one hitmarker, one kill).
@@ -544,9 +554,14 @@ export class DustlineRoom extends Room {
       for (const pl of list) {
         const pd = unit3(pl?.d)
         if (!pd || Math.acos(Math.min(1, pd[0] * d[0] + pd[1] * d[1] + pd[2] * d[2])) > maxCone) continue
-        const pe = vec3(pl.e)
+        let pe = vec3(pl.e)
+        const struck = this.glassInWay(o, pd, Math.min(w.range, pe ? dist3(o, pe) + 0.06 : w.range))
+        if (struck) {
+          this.breakGlass([struck.i])
+          pe = [o[0] + pd[0] * struck.t, o[1] + pd[1] * struck.t, o[2] + pd[2] * struck.t]
+        }
         if (pe && dist3(o, pe) <= w.range) ends.push(pe.map((v) => Math.round(v * 100) / 100))
-        if (typeof pl.h !== 'string') continue
+        if (struck || typeof pl.h !== 'string') continue
         const r = this.evaluateHit(p, w, o, pd, pl.h, pl.z, now)
         if (!r) continue
         const t = totals.get(r.target) ?? { dmg: 0, headshot: false }
@@ -559,7 +574,7 @@ export class DustlineRoom extends Room {
         hit = true
       }
     } else {
-      hit = typeof msg.h === 'string' && this.resolveHit(p, w, o, d, msg.h, msg.z, now)
+      hit = !pane && typeof msg.h === 'string' && this.resolveHit(p, w, o, d, msg.h, msg.z, now)
     }
     // Enemy C4 and claymores in the line of fire go up.
     if (this.grenadeBodies.size) this.shootCharges(p, o, d, Math.min(w.range, dist3(o, e)) + 0.3)
@@ -645,6 +660,8 @@ export class DustlineRoom extends Room {
       // First thing along this tick's path: map geometry or a player.
       let t = this.mapWorld.raycast(r.pos, dir, len)
       t = t === null ? Infinity : t
+      const pane = this.glassInWay(r.pos, dir, Math.min(len, t))
+      if (pane) this.breakGlass([pane.i])
       for (const victim of this.state.players.values()) {
         if (victim.state !== ALIVE || victim.id === r.owner || now - r.born < 60) continue
         const h = rayHitbox(r.pos, dir, hitboxFor(victim.x, victim.y, victim.z, stanceOf(victim), victim.yaw), 0.15)
@@ -714,6 +731,12 @@ export class DustlineRoom extends Room {
     meta.protectedUntil = 0
     this.broadcast('melee', { id: p.id }, { except: client })
 
+    // The blade through a pane of glass within reach.
+    const pane = Number.isInteger(msg.g) ? msg.g : -1
+    if (pane >= 0 && pane < (this.map.glass?.length ?? 0) && glassDistance(this.map.glass, pane, eyeOf(p)) <= KNIFE_GLASS_REACH + 0.6) {
+      this.breakGlass([pane])
+      return
+    }
     if (typeof msg.h !== 'string') return
     const target = this.state.players.get(msg.h)
     if (!target || target === p || target.state !== ALIVE || !this.isEnemy(p, target)) return
@@ -1245,6 +1268,14 @@ export class DustlineRoom extends Room {
         this.removeGrenade(id)
         continue
       }
+      if (gd.body && this.map.glass?.length) {
+        const v = gd.body.linvel()
+        const speed = Math.hypot(v.x, v.y, v.z)
+        if (speed > 2) {
+          const pane = glassRayHit(this.map.glass, this.glassBroken, pos, [v.x / speed, v.y / speed, v.z / speed], speed * 0.06 + 0.15)
+          if (pane) this.breakGlass([pane.i])
+        }
+      }
       if (gd.body && (gd.kind === 'semtex' || gd.kind === 'c4')) {
         const v = gd.body.linvel()
         const speed = Math.hypot(v.x, v.y, v.z)
@@ -1357,6 +1388,7 @@ export class DustlineRoom extends Room {
     if (!spec?.damage) return
     const claymore = gd.kind === 'claymore'
     this.broadcast('explosion', { k: gd.kind, p: pos, ...(claymore && { y: gd.yaw }) })
+    if (this.map.glass?.length) this.breakGlass(glassNear(this.map.glass, this.glassBroken, pos, spec.radius * 0.75))
     const owner = this.state.players.get(gd.owner) ?? null
     const { radius, damage } = spec
     const weaponId = gd.kind === 'rocket' ? 'rpg' : gd.kind
@@ -1451,6 +1483,39 @@ export class DustlineRoom extends Room {
   }
 
   /* -------------------------------------------------------------------------
+   * Breakable glass (shared/glass.js)
+   * ----------------------------------------------------------------------- */
+
+  /** The first whole pane along a ray within `maxT`, unless something solid comes first: { i, t } or null. */
+  glassInWay(o, d, maxT) {
+    const panes = this.map.glass
+    if (!panes?.length) return null
+    const pane = glassRayHit(panes, this.glassBroken, o, d, maxT)
+    if (!pane) return null
+    const wall = this.mapWorld.raycast(o, d, pane.t)
+    return wall !== null && wall < pane.t - 0.05 ? null : pane
+  }
+
+  /** Breaks panes: gone from the world, and every client shatters them. */
+  breakGlass(list) {
+    let changed = false
+    for (const i of list) {
+      if (this.glassBroken.has(i)) continue
+      this.glassBroken.add(i)
+      this.mapWorld.breakPane(i)
+      changed = true
+    }
+    if (changed) this.state.glass = encodeBroken(this.glassBroken, this.map.glass.length)
+  }
+
+  mendGlass() {
+    if (!this.glassBroken.size) return
+    this.glassBroken.clear()
+    this.mapWorld.mendGlass()
+    this.state.glass = ''
+  }
+
+  /* -------------------------------------------------------------------------
    * Bot hooks
    * ----------------------------------------------------------------------- */
 
@@ -1467,6 +1532,23 @@ export class DustlineRoom extends Room {
       ? headPoint(target.x, target.y, target.z, stanceOf(target), target.yaw)
       : chestPoint(target.x, target.y, target.z, stanceOf(target), target.yaw)
     if (hit && !this.canSee(eye, end)) hit = false
+    // A whole pane between them: this shot breaks it (the next can hit).
+    if (hit) {
+      const dx = end[0] - eye[0]
+      const dy = end[1] - eye[1]
+      const dz = end[2] - eye[2]
+      const l = Math.hypot(dx, dy, dz) || 1
+      const dir = [dx / l, dy / l, dz / l]
+      const pane = this.glassInWay(eye, dir, l)
+      if (pane) {
+        this.breakGlass([pane.i])
+        const w = this.weaponOf(meta, weaponId)
+        const at = [eye[0] + dir[0] * pane.t, eye[1] + dir[1] * pane.t, eye[2] + dir[2] * pane.t]
+        this.broadcast('shot', { id: p.id, w: weaponId, o: muzzle, e: at, b: false, q: w.quiet })
+        this.noise(p, now, w.quiet)
+        return
+      }
+    }
     if (!hit) {
       const aim = [end[0] + (Math.random() - 0.5) * 1.6, end[1] + (Math.random() - 0.5) * 1.1, end[2] + (Math.random() - 0.5) * 1.6]
       const dx = aim[0] - eye[0]
@@ -1670,6 +1752,7 @@ export class DustlineRoom extends Room {
 
   resetMatch() {
     const s = this.state
+    this.mendGlass()
     s.scoreAlpha = 0
     s.scoreBravo = 0
     s.timeLeft = this.rules.timeLimit

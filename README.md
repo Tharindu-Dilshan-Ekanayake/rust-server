@@ -1,10 +1,10 @@
 # Modern Guns — game server
 
 Authoritative [Colyseus 0.18](https://colyseus.io) server for **Modern Guns**, an 8-player
-FPS (Team Deathmatch, Free-for-all and Search & Destroy) on six maps, *Bramblewood*, *Old Quarter*,
-*Hollow Creek*, *Palmwood*, *Atomic Acres* and *Dustline Pumpstation*. The client lives in `../rust-client`.
+FPS (Team Deathmatch, Free-for-all and Search & Destroy) on seven maps, *Skyport Terminal*,
+*Bramblewood*, *Old Quarter*, *Hollow Creek*, *Palmwood*, *Atomic Acres* and *Dustline Pumpstation*. The client lives in `../rust-client`.
 
-Rooms are created with a `map` option (`bramble`, `quarter`, `hollow`, `palmwood`, `acres` or `dustline`, see
+Rooms are created with a `map` option (`terminal`, `bramble`, `quarter`, `hollow`, `palmwood`, `acres` or `dustline`, see
 `src/shared/maps.js`) and matchmaking filters on mode and map. A client that
 doesn't send one (from before maps) gets Dustline. Each room builds its own
 Rapier world from its map; the bot nav graph is built once per map.
@@ -128,6 +128,14 @@ Movement is client-predicted; everything that matters is decided here:
 - **Shotgun pellets**: a blast carries each pellet's direction and claimed hit;
   every pellet is checked like a bullet (and must sit inside the gun's spread
   cone), and the damage per target is summed into one hit.
+- **Breakable glass** (maps with `glass` in `shared/maps.js`: Skyport Terminal):
+  every shot is tested against the panes still whole (`shared/glass.js`). The
+  first one in the way breaks and stops the bullet (any hit claimed past it
+  doesn't count); bots' shots, rockets, grenades flying into a pane, blasts
+  within reach and a knife at arm's length (`ml` with `g`) break them too.
+  Broken panes lose their colliders in the room's world (walkable) and go into
+  `state.glass` (a hex bitmask) for the clients; a new match or S&D round mends
+  them.
 - **Burst fire** (the Strix): one trigger pull fires `burst` rounds
   `fireInterval` apart, then waits `burstDelay`; the per-weapon leaky bucket
   lets a burst through and bots fire at the average rate (`cycleTime`).

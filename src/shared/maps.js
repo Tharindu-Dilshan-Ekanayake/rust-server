@@ -10,6 +10,7 @@ import * as bramble from './mapBramble.js'
 import * as hollow from './mapHollow.js'
 import * as palmwood from './mapPalmwood.js'
 import * as quarter from './mapQuarter.js'
+import * as terminal from './mapTerminal.js'
 
 export const MAPS = Object.freeze({
   dustline: Object.freeze({
@@ -124,7 +125,6 @@ export const MAPS = Object.freeze({
     tagline: 'An overgrown farm town',
     blurb: 'An abandoned farm the woods have taken back. A field of hay bales under the water tower, the barn, a deep dried-up creek with its covered boardwalk and bridge, ivy on every wall.',
     size: '104 × 104 m',
-    isNew: true,
     half: bramble.BRAMBLE_HALF,
     entities: bramble.BRAMBLE_ENTITIES,
     colliders: bramble.buildBrambleColliders,
@@ -138,10 +138,33 @@ export const MAPS = Object.freeze({
     // Attackers from the west; sites in the corner of the field and the yard of the brick house on the road.
     snd: { attack: 'alpha', sites: [{ id: 'A', p: [16.0, 0, -28.0] }, { id: 'B', p: [18.6, 0, 26.0] }] },
   }),
+  terminal: Object.freeze({
+    id: 'terminal',
+    name: terminal.TERMINAL_NAME,
+    short: 'Skyport',
+    tagline: 'A shelled airport terminal and the jets on its apron',
+    blurb: 'A battle-scarred, L-shaped airport terminal and the wide-body jet parked nose-in at its gate, a crashed airliner burning on the apron. Walk the jet bridge into the cabin, slide out onto the apron, climb the fallen floor in the pier, or fight through the hall, the shops and the lounges behind the shot-out glass.',
+    size: '112 × 112 m',
+    isNew: true,
+    half: terminal.TERMINAL_HALF,
+    entities: terminal.TERMINAL_ENTITIES,
+    colliders: terminal.buildTerminalColliders,
+    glass: terminal.TERMINAL_GLASS,
+    ladders: terminal.TERMINAL_LADDERS,
+    ladderAt: terminal.terminalLadderAt,
+    spawns: terminal.TERMINAL_SPAWNS,
+    ammoCrates: terminal.TERMINAL_AMMO,
+    nav: terminal.TERMINAL_NAV,
+    killY: -5,
+    maxY: 22,
+    // Attackers from the apron; site A inside the terminal (the east hall's gate lounge), site B inside
+    // the jet at the gate (its cabin, by the over-wing exits: up the slide, the stairs, the bridge or a wing).
+    snd: { attack: 'bravo', sites: [{ id: 'A', p: [26.0, 0, -35.0] }, { id: 'B', p: [0, 3.5, 4.9] }] },
+  }),
 })
 
 /** Order maps are listed in the menus. */
-export const MAP_IDS = Object.freeze(['bramble', 'quarter', 'hollow', 'palmwood', 'acres', 'dustline'])
+export const MAP_IDS = Object.freeze(['terminal', 'bramble', 'quarter', 'hollow', 'palmwood', 'acres', 'dustline'])
 /** What a new player starts on. */
 export const DEFAULT_MAP = 'acres'
 /** What a room opens on when the client didn't say (clients from before maps). */
