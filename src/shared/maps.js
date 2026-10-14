@@ -1,5 +1,5 @@
 /**
- * Every map in the game, by id. A map is the data both sides need to play on it:
+ * Every map in the game, by id (`short` is its name where room is tight). A map is the data both sides need to play on it:
  * its colliders, ladders, spawns, resupply crates, the bot navigation hints, its
  * bounds and its Search & Destroy layout (`snd`: which team spawns attack, and
  * bomb sites A and B). The client also draws its `entities` (see world/MapScene.jsx).
@@ -8,11 +8,13 @@ import * as dustline from './map.js'
 import * as acres from './mapAcres.js'
 import * as hollow from './mapHollow.js'
 import * as palmwood from './mapPalmwood.js'
+import * as quarter from './mapQuarter.js'
 
 export const MAPS = Object.freeze({
   dustline: Object.freeze({
     id: 'dustline',
     name: dustline.MAP_NAME,
+    short: 'Dustline',
     tagline: 'Desert pumpstation in a sandstorm',
     blurb: 'Abandoned desert pumping station in a sandstorm. Refinery decks, a derrick and container stacks.',
     size: '60 × 60 m',
@@ -37,6 +39,7 @@ export const MAPS = Object.freeze({
   acres: Object.freeze({
     id: 'acres',
     name: acres.ACRES_NAME,
+    short: 'Atomic Acres',
     tagline: '1950s test-site suburb',
     blurb: 'A 1950s test-site suburb. Two houses face off across the cul-de-sac — bus, moving truck and backyards between them.',
     size: '84 × 84 m',
@@ -56,6 +59,7 @@ export const MAPS = Object.freeze({
   palmwood: Object.freeze({
     id: 'palmwood',
     name: palmwood.PALMWOOD_NAME,
+    short: 'Palmwood',
     tagline: 'Tropical plywood shanty town',
     blurb: 'A plywood shanty town in the palms. A dirt loop round the unfinished Frame, market stalls, a warehouse, and two lookout towers.',
     size: '76 × 76 m',
@@ -75,10 +79,10 @@ export const MAPS = Object.freeze({
   hollow: Object.freeze({
     id: 'hollow',
     name: hollow.HOLLOW_NAME,
+    short: 'Hollow Creek',
     tagline: 'A small town on Halloween night',
     blurb: 'Halloween night in a small town. A witch statue on the roundabout, a church and its graveyard, a creek, and a barn and a watchtower on fire.',
     size: '80 × 80 m',
-    isNew: true,
     half: hollow.HOLLOW_HALF,
     entities: hollow.HOLLOW_ENTITIES,
     colliders: hollow.buildHollowColliders,
@@ -92,10 +96,31 @@ export const MAPS = Object.freeze({
     // Attackers from the west; sites in the graveyard (north) and the barn yard (south).
     snd: { attack: 'alpha', sites: [{ id: 'A', p: [8.8, 0, -30.4] }, { id: 'B', p: [7.5, 0, 21.8] }] },
   }),
+  quarter: Object.freeze({
+    id: 'quarter',
+    name: quarter.QUARTER_NAME,
+    short: 'Old Quarter',
+    tagline: 'Sun-baked backstreets round a building site',
+    blurb: 'Sun-baked backstreets round an unfinished concrete frame. Rooftops, balconies, tin shacks, a bulldozer and Market Street.',
+    size: '80 × 80 m',
+    isNew: true,
+    half: quarter.QUARTER_HALF,
+    entities: quarter.QUARTER_ENTITIES,
+    colliders: quarter.buildQuarterColliders,
+    ladders: quarter.QUARTER_LADDERS,
+    ladderAt: quarter.quarterLadderAt,
+    spawns: quarter.QUARTER_SPAWNS,
+    ammoCrates: quarter.QUARTER_AMMO,
+    nav: quarter.QUARTER_NAV,
+    killY: -5,
+    maxY: 16,
+    // Attackers from the west; sites in the building site (by the bulldozer) and the courtyard house.
+    snd: { attack: 'alpha', sites: [{ id: 'A', p: [8.6, 0, -3.6] }, { id: 'B', p: [2.6, 0, 25.6] }] },
+  }),
 })
 
 /** Order maps are listed in the menus. */
-export const MAP_IDS = Object.freeze(['hollow', 'palmwood', 'acres', 'dustline'])
+export const MAP_IDS = Object.freeze(['quarter', 'hollow', 'palmwood', 'acres', 'dustline'])
 /** What a new player starts on. */
 export const DEFAULT_MAP = 'acres'
 /** What a room opens on when the client didn't say (clients from before maps). */

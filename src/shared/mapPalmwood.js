@@ -490,7 +490,7 @@ export function landingRails(st) {
   return out
 }
 
-function buildingColliders(b) {
+export function buildingColliders(b) {
   const out = buildingWallBoxes(b).map((w) => boxC(w.p, w.size))
   const t = PW_WALL_T
   if (b.slab) {
