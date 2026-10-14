@@ -128,6 +128,21 @@ Movement is client-predicted; everything that matters is decided here:
 - **Shotgun pellets**: a blast carries each pellet's direction and claimed hit;
   every pellet is checked like a bullet (and must sit inside the gun's spread
   cone), and the damage per target is summed into one hit.
+- **Burst fire** (the Strix): one trigger pull fires `burst` rounds
+  `fireInterval` apart, then waits `burstDelay`; the per-weapon leaky bucket
+  lets a burst through and bots fire at the average rate (`cycleTime`).
+- **Lethals** are the class's `lethal` (`frag`, `semtex`, `c4`, `claymore`;
+  counts and blast numbers in `EQUIPMENT`):
+  - Semtex sticks to the first wall, floor or player it meets (and rides along
+    on them), 2.4 s fuse.
+  - C4 is lobbed and sticks where it lands; the `det` message sets off every
+    armed C4 of yours. Only one can be out at a time.
+  - A claymore is planted a stride ahead, facing where you look, arms after 1 s
+    and trips (an `act` `trip` click, then the blast 0.25 s later) on an enemy
+    within 3.2 m inside its front cone and in sight of it. Its blast is
+    directional: full in front, little behind.
+  - Bullets set off enemy C4 and claymores they hit, and any blast sets off
+    charges within 2.6 m. A dead or departed player's C4 and claymores fizzle.
 - **Rockets** (the Warhead RL) are flown here (`tickRockets`: speed, a little
   drop, 3 s max flight) and burst on the first wall or player they meet, with the
   same splash rules as a frag (your own rocket hurts you at half strength).
@@ -148,12 +163,12 @@ the host (`state.host`) sends `start_match` to reset scores and start the clock.
 
 Client → server: `choose_team {team|'auto'}`, `set_class {classData}`,
 `spawn_request {classData?}`, `m` (movement + stance flags: crouch, ADS, sprint, climb, prone, slide; 20 Hz), `fire`, `sw` (switch),
-`rl` (reload), `ml` (melee), `th` (throw), `use {on}` (hold to plant / defuse), `avatar`, `rank {r}`, `pong`.
+`rl` (reload), `ml` (melee), `th {k}` (throw or plant the lethal / tactical), `det` (set off your C4), `use {on}` (hold to plant / defuse), `avatar`, `rank {r}`, `pong`.
 
 Server → client: `welcome`, `team_select`, `team_assigned`, `team_denied`,
 `team_moved`, `spawn {p, yaw, classData, ammo}`, `correct`, `shot`, `hit`,
 `damaged`, `kill`, `melee`, `explosion`, `flash`, `ammo`, `class_ack`,
-`match_end`, `match_reset`, `snd {e, ...}` (Search & Destroy, above), `notice {text, ms}` (e.g. the drain warning), `xp {n, why}`, `act` (another player reloading or throwing, for their animation), `ping`. Room state replaces a `room_state` message.
+`match_end`, `match_reset`, `snd {e, ...}` (Search & Destroy, above), `notice {text, ms}` (e.g. the drain warning), `xp {n, why}`, `act` (another player reloading, throwing or planting, for their animation; `trip` when a claymore clicks), `ping`. Room state replaces a `room_state` message.
 A `shot` carries `q: true` when suppressed (clients play it quietly and skip the
 minimap ping), and each player's `kit` string in state lists their weapons and
 attachments so others render the right guns.
@@ -175,6 +190,7 @@ npm run test:duel       # two clients: movement validation, noclip guard, hit va
 npm run test:private    # private rooms: keys, join by key, caps, bots on/off
 npm run test:fall       # fall damage: hops/stairs free, 5 m landing hurts, tower kills
 npm run test:arsenal    # rocket kill credited to the launcher, shotgun pellets = one hit, kill XP
+npm run test:explosives # burst lands 3, C4 throw / detonate / one-at-a-time / shot by an enemy, claymore trip, semtex sticks
 npm run test:drain      # deploy drain: warm-up moved on at once, match finishes, then everyone moves
 npm run test:snd        # Search & Destroy with bots: plants, defuses, drops, side swap, match to 4 (MAP=quarter|hollow|palmwood|acres|dustline, SECONDS=420)
 npm run test:load       # CPU / lag / memory with 1, 2, 4 full rooms (STEPS=1,2,4,6, MAP=acres)

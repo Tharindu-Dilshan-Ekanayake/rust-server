@@ -38,10 +38,10 @@ import {
   kitString,
   sanitizeClass,
   reloadDuration,
-  SECONDARY_OPTIONS,
   THROW_LOFT,
   THROW_SPEED,
   WEAPONS,
+  weaponsIn,
 } from '../shared/weapons.js'
 import { DustlineState, GrenadeState, PickupState, PlayerState, SmokeState } from './schema.js'
 import { LONGSHOT_DISTANCE, RANKS, XP } from '../shared/progression.js'
@@ -267,6 +267,7 @@ export class DustlineRoom extends Room {
     const meta = this.meta.get(p.id)
     meta?.teamTimer?.clear()
     meta?.reloadTimer?.clear()
+    this.dropCharges(p.id)
     this.state.players.delete(p.id)
     this.meta.delete(p.id)
     this.snd?.onLeave(p)
@@ -412,6 +413,7 @@ export class DustlineRoom extends Room {
     this.onMessage('rl', withPlayer(this.onReload))
     this.onMessage('ml', withPlayer(this.onMelee))
     this.onMessage('th', withPlayer(this.onThrow))
+    this.onMessage('det', withPlayer(this.onDetonate))
     this.onMessage('choose_team', withPlayer(this.onChooseTeam))
     this.onMessage('set_class', withPlayer(this.onSetClass))
     this.onMessage('spawn_request', withPlayer(this.onSpawnRequest))
@@ -559,6 +561,8 @@ export class DustlineRoom extends Room {
     } else {
       hit = typeof msg.h === 'string' && this.resolveHit(p, w, o, d, msg.h, msg.z, now)
     }
+    // Enemy C4 and claymores in the line of fire go up.
+    if (this.grenadeBodies.size) this.shootCharges(p, o, d, Math.min(w.range, dist3(o, e)) + 0.3)
     // `b`: the shot drew blood (hit puff instead of dust); `q`: suppressed;
     // `es`: where each shotgun pellet ended up.
     this.broadcast('shot', { id: p.id, w: w.id, o, e, b: hit, q: w.quiet, ...(ends && { es: ends }) }, { except: client })
@@ -726,13 +730,21 @@ export class DustlineRoom extends Room {
   onThrow(_client, p, meta, msg) {
     if (p.state !== ALIVE || !this.inPlay()) return
     const kind = msg.k
-    if (kind === 'frag') {
+    const cls = meta.activeClass
+    if (kind === cls?.lethal) {
       if (meta.lethal <= 0) return
+      // One C4 out at a time: the button sets off the one that's out instead.
+      if (kind === 'c4' && this.chargesOf(p.id, 'c4').length) return
       meta.lethal -= 1
-    } else if (kind === 'flash' || kind === 'smoke') {
-      if (meta.activeClass?.tactical !== kind || meta.tactical <= 0) return
+    } else if ((kind === 'flash' || kind === 'smoke') && cls?.tactical === kind) {
+      if (meta.tactical <= 0) return
       meta.tactical -= 1
     } else {
+      return
+    }
+    if (kind === 'claymore') {
+      this.plantClaymore(p)
+      this.broadcast('act', { id: p.id, a: 'plant' }, { except: _client })
       return
     }
     const eye = eyeOf(p)
@@ -742,6 +754,7 @@ export class DustlineRoom extends Room {
 
     let fuse = Infinity
     if (kind === 'frag') fuse = EQUIPMENT.frag.fuse - clamp(isNum(msg.cook) ? msg.cook : 0, 0, EQUIPMENT.frag.fuse)
+    if (kind === 'semtex') fuse = EQUIPMENT.semtex.fuse
     if (kind === 'flash') fuse = EQUIPMENT.flash.fuse
     if (fuse <= 0.05) {
       // Cooked too long: it goes off in hand.
@@ -749,9 +762,77 @@ export class DustlineRoom extends Room {
       return
     }
     this.broadcast('act', { id: p.id, a: 'throw' }, { except: _client })
+    const speed = kind === 'c4' ? EQUIPMENT.c4.throwSpeed : THROW_SPEED
+    const loft = kind === 'c4' ? 1.4 : THROW_LOFT
     const start = [o[0] + d[0] * 0.4, o[1] + d[1] * 0.4, o[2] + d[2] * 0.4]
-    const vel = [d[0] * THROW_SPEED, d[1] * THROW_SPEED + THROW_LOFT, d[2] * THROW_SPEED]
+    const vel = [d[0] * speed, d[1] * speed + loft, d[2] * speed]
     this.spawnGrenade(p, kind, start, vel, fuse)
+  }
+
+  /** A dead (or departed) player's C4 and claymores fizzle out; grenades already thrown still go off. */
+  dropCharges(ownerId) {
+    for (const [id, gd] of this.grenadeBodies) {
+      if (gd.owner === ownerId && (gd.kind === 'c4' || gd.kind === 'claymore')) this.removeGrenade(id)
+    }
+  }
+
+  /** The detonator: every armed C4 of yours goes off. */
+  onDetonate(_client, p) {
+    if (p.state !== ALIVE || !this.inPlay()) return
+    const now = Date.now()
+    for (const [id, gd] of this.chargesOf(p.id, 'c4')) {
+      if (now < gd.armedAt) continue
+      const pos = this.chargePos(gd)
+      this.removeGrenade(id)
+      this.detonate(gd, pos)
+    }
+  }
+
+  /** [id, entry] of a player's thrown or placed charges of one kind. */
+  chargesOf(ownerId, kind) {
+    return [...this.grenadeBodies].filter(([, gd]) => gd.owner === ownerId && gd.kind === kind)
+  }
+
+  /**
+   * A claymore set down a stride in front of you, facing the way you look (at
+   * your feet if there's a wall or a drop in the way).
+   */
+  plantClaymore(p) {
+    const fx = -Math.sin(p.yaw)
+    const fz = -Math.cos(p.yaw)
+    let x = p.x + fx * 0.7
+    let z = p.z + fz * 0.7
+    let y = this.mapWorld.groundY(x, p.y + 0.8, z, 2)
+    const open = y !== null && Math.abs(y - p.y) < 0.6 && this.mapWorld.clearLine([p.x, p.y + 0.3, p.z], [x, y + 0.3, z], 0.05)
+    if (!open) {
+      x = p.x
+      z = p.z
+      y = this.mapWorld.groundY(x, p.y + 0.5, z, 2) ?? p.y
+    }
+    const id = `g${++this.uid}`
+    const now = Date.now()
+    const g = new GrenadeState()
+    g.id = id
+    g.kind = 'claymore'
+    g.owner = p.id
+    g.x = x
+    g.y = y
+    g.z = z
+    g.yaw = p.yaw
+    g.stuck = true
+    this.state.grenades.set(id, g)
+    this.grenadeBodies.set(id, {
+      body: null,
+      kind: 'claymore',
+      owner: p.id,
+      ownerTeam: p.team,
+      explodeAt: Infinity,
+      pos: [x, y, z],
+      yaw: p.yaw,
+      armedAt: now + EQUIPMENT.claymore.armTime * 1000,
+      trippedAt: 0,
+      spawnedAt: now,
+    })
   }
 
   onChooseTeam(_client, p, _meta, msg) {
@@ -890,12 +971,16 @@ export class DustlineRoom extends Room {
     const meta = this.createMeta(p, null)
     meta.bot = createBotBrain()
     const pick = (list) => list[Math.floor(Math.random() * list.length)]
-    const primary = pick(['ar', 'ar', 'smg', 'smg', 'lmg', 'sniper'])
+    // Mostly rifles and SMGs, now and then a machine gun or a sniper: any gun
+    // with a bot kit (the kits are the guns clients build ahead of time).
+    const category = pick(['ar', 'ar', 'ar', 'smg', 'smg', 'smg', 'lmg', 'sniper'])
+    const primary = pick(weaponsIn(category).filter((id) => BOT_KITS[id]))
     meta.activeClass = sanitizeClass({
       name: 'BOT',
       primary,
       primaryAtt: { ...pick(BOT_KITS[primary]) },
-      secondary: pick(SECONDARY_OPTIONS.filter((id) => id !== 'rpg')),
+      secondary: pick(weaponsIn('pistol')),
+      lethal: 'frag',
       tactical: Math.random() < 0.5 ? 'flash' : 'smoke',
     })
     meta.respawnAt = Date.now() + 300 + Math.random() * 1500
@@ -967,7 +1052,7 @@ export class DustlineRoom extends Room {
       meta.ammo[id] = { mag: w.magSize, reserve: w.reserve }
     }
     p.kit = kitString(cls)
-    meta.lethal = EQUIPMENT.frag.count
+    meta.lethal = EQUIPMENT[cls.lethal].count
     meta.tactical = EQUIPMENT[cls.tactical].count
     meta.fireCredits = {}
     this.cancelReload(meta)
@@ -1049,6 +1134,7 @@ export class DustlineRoom extends Room {
     victim.deaths += 1
     vm.respawnAt = Date.now() + RESPAWN_DELAY * 1000
     this.cancelReload(vm)
+    this.dropCharges(victim.id)
 
     const credited = killer && killer !== victim && this.isEnemy(killer, victim)
     if (credited) {
@@ -1088,6 +1174,7 @@ export class DustlineRoom extends Room {
     g.x = pos[0]
     g.y = pos[1]
     g.z = pos[2]
+    g.yaw = owner.yaw
     this.state.grenades.set(id, g)
     this.grenadeBodies.set(id, {
       body,
@@ -1097,29 +1184,81 @@ export class DustlineRoom extends Room {
       explodeAt: Number.isFinite(fuseSeconds) ? now + fuseSeconds * 1000 : Infinity,
       landedAt: 0,
       spawnedAt: now,
+      armedAt: kind === 'c4' ? now + EQUIPMENT.c4.armTime * 1000 : 0,
+      /** Last tick's position and speed: an impact is a sudden drop in speed. */
+      prev: [...pos],
+      prevSpeed: Math.hypot(...vel),
+      /** Once stuck: its fixed spot, or the player it's stuck to and where on them. */
+      pos: null,
+      stuckTo: null,
+      offset: null,
     })
   }
 
   removeGrenade(id) {
     const gd = this.grenadeBodies.get(id)
-    if (gd) this.mapWorld.removeBody(gd.body)
+    if (gd?.body) this.mapWorld.removeBody(gd.body)
     this.grenadeBodies.delete(id)
     this.state.grenades.delete(id)
+  }
+
+  /** Where a charge is now: in flight, stuck in place, or riding on a player. */
+  chargePos(gd) {
+    if (gd.body) {
+      const t = gd.body.translation()
+      return [t.x, t.y, t.z]
+    }
+    if (gd.stuckTo) {
+      const v = this.state.players.get(gd.stuckTo)
+      if (v?.state === ALIVE) return [v.x + gd.offset[0], v.y + gd.offset[1], v.z + gd.offset[2]]
+    }
+    return gd.pos
+  }
+
+  /** Semtex and C4 stop where they hit (Semtex on a player too): the body goes, the charge stays. */
+  stick(id, gd, pos, victim = null) {
+    this.mapWorld.removeBody(gd.body)
+    gd.body = null
+    gd.pos = pos
+    if (victim) {
+      gd.stuckTo = victim.id
+      gd.offset = [pos[0] - victim.x, pos[1] - victim.y, pos[2] - victim.z]
+    }
+    const g = this.state.grenades.get(id)
+    if (g) g.stuck = true
   }
 
   tickGrenades(now) {
     for (const [id, gd] of this.grenadeBodies) {
       const g = this.state.grenades.get(id)
-      const t = gd.body.translation()
-      if (g) {
-        g.x = t.x
-        g.y = t.y
-        g.z = t.z
+      if (gd.kind === 'claymore') {
+        this.tickClaymore(id, gd, now)
+        continue
       }
-      const pos = [t.x, t.y, t.z]
-      if (t.y < this.map.killY) {
+      const pos = this.chargePos(gd)
+      if (g) {
+        g.x = pos[0]
+        g.y = pos[1]
+        g.z = pos[2]
+      }
+      if (pos[1] < this.map.killY) {
         this.removeGrenade(id)
         continue
+      }
+      if (gd.body && (gd.kind === 'semtex' || gd.kind === 'c4')) {
+        const v = gd.body.linvel()
+        const speed = Math.hypot(v.x, v.y, v.z)
+        // Semtex on whoever it meets in flight.
+        const victim = gd.kind === 'semtex' && now - gd.spawnedAt > 60 ? this.playerAlong(gd.prev, pos, gd.owner) : null
+        if (victim) this.stick(id, gd, victim.at, victim.p)
+        else if ((gd.prevSpeed - speed > 2.2 || (speed < 0.5 && now - gd.spawnedAt > 150)) && now - gd.spawnedAt > 40) this.stick(id, gd, pos)
+        gd.prev = pos
+        gd.prevSpeed = speed
+      }
+      // A charge on a player who died drops off where they fell.
+      if (gd.stuckTo && this.state.players.get(gd.stuckTo)?.state !== ALIVE) {
+        gd.stuckTo = null
+        gd.pos = pos
       }
       if (gd.kind === 'smoke') {
         const v = gd.body.linvel()
@@ -1139,34 +1278,124 @@ export class DustlineRoom extends Room {
     }
   }
 
+  /** The first player (not `ownerId`) the segment a->b passes through, and where. */
+  playerAlong(a, b, ownerId) {
+    const dx = b[0] - a[0]
+    const dy = b[1] - a[1]
+    const dz = b[2] - a[2]
+    const len = Math.hypot(dx, dy, dz)
+    if (len < 1e-4) return null
+    const dir = [dx / len, dy / len, dz / len]
+    let best = null
+    for (const p of this.state.players.values()) {
+      if (p.state !== ALIVE || p.id === ownerId) continue
+      const h = rayHitbox(a, dir, hitboxFor(p.x, p.y, p.z, stanceOf(p), p.yaw), 0.08)
+      if (h && h.t <= len && (!best || h.t < best.t)) best = { p, t: h.t }
+    }
+    return best && { p: best.p, at: [a[0] + dir[0] * best.t, a[1] + dir[1] * best.t, a[2] + dir[2] * best.t] }
+  }
+
+  /** Is `victim` someone this charge's owner's explosives hurt? (Teammates are spared; the owner is not.) */
+  hostileTo(gd, victim) {
+    if (victim.id === gd.owner) return true
+    return !isTeamMode(this.mode) || victim.team !== gd.ownerTeam
+  }
+
+  /**
+   * Armed, it watches its front: an enemy stepping within reach, inside its
+   * cone and in plain sight of it, sets off the click, then the blast.
+   */
+  tickClaymore(id, gd, now) {
+    if (gd.trippedAt) {
+      if (now - gd.trippedAt >= EQUIPMENT.claymore.delay * 1000) {
+        this.removeGrenade(id)
+        this.detonate(gd, gd.pos)
+      }
+      return
+    }
+    if (now < gd.armedAt) return
+    const { trigger, cone } = EQUIPMENT.claymore
+    const fx = -Math.sin(gd.yaw)
+    const fz = -Math.cos(gd.yaw)
+    const eye = [gd.pos[0], gd.pos[1] + 0.3, gd.pos[2]]
+    for (const p of this.state.players.values()) {
+      if (p.state !== ALIVE || p.id === gd.owner || !this.hostileTo(gd, p)) continue
+      const dx = p.x - gd.pos[0]
+      const dz = p.z - gd.pos[2]
+      const d = Math.hypot(dx, dz)
+      if (d > trigger || d < 0.05 || Math.abs(p.y - gd.pos[1]) > 1.6) continue
+      if (Math.acos(Math.max(-1, Math.min(1, (dx * fx + dz * fz) / d))) > cone) continue
+      if (!this.mapWorld.clearLine(eye, chestPoint(p.x, p.y, p.z, stanceOf(p), p.yaw), 0.1)) continue
+      gd.trippedAt = now
+      this.broadcast('act', { id: gd.owner, a: 'trip', p: gd.pos })
+      return
+    }
+  }
+
+  /** Bullets set off enemy C4 and claymores they hit (the owner's blast, the owner's kills). */
+  shootCharges(shooter, o, d, maxDist) {
+    for (const [id, gd] of this.grenadeBodies) {
+      if ((gd.kind !== 'c4' && gd.kind !== 'claymore') || gd.body || gd.stuckTo) continue
+      if (gd.owner === shooter.id || !this.hostileTo(gd, shooter)) continue
+      const pos = gd.pos
+      const t = raySphere(o, d, [pos[0], pos[1] + 0.12, pos[2]], 0.28)
+      if (t > maxDist) continue
+      const wall = this.mapWorld.raycast(o, d, t)
+      if (wall !== null && wall < t - 0.2) continue
+      this.removeGrenade(id)
+      this.detonate(gd, pos)
+    }
+  }
+
   detonate(gd, pos) {
     if (gd.kind === 'flash') {
       this.broadcast('flash', { p: pos })
       this.flashBots(pos)
       return
     }
-    if (gd.kind !== 'frag' && gd.kind !== 'rocket') return
-    this.broadcast('explosion', { k: gd.kind, p: pos })
+    const spec = gd.kind === 'rocket' ? WEAPONS.rpg.projectile : EQUIPMENT[gd.kind]
+    if (!spec?.damage) return
+    const claymore = gd.kind === 'claymore'
+    this.broadcast('explosion', { k: gd.kind, p: pos, ...(claymore && { y: gd.yaw }) })
     const owner = this.state.players.get(gd.owner) ?? null
-    const { radius, damage } = gd.kind === 'rocket' ? WEAPONS.rpg.projectile : EQUIPMENT.frag
-    const weaponId = gd.kind === 'rocket' ? 'rpg' : 'frag'
+    const { radius, damage } = spec
+    const weaponId = gd.kind === 'rocket' ? 'rpg' : gd.kind
     const lift = [pos[0], pos[1] + 0.25, pos[2]]
+    const fx = -Math.sin(gd.yaw ?? 0)
+    const fz = -Math.cos(gd.yaw ?? 0)
     for (const victim of this.state.players.values()) {
       if (victim.state !== ALIVE) continue
       const self = victim.id === gd.owner
       // No friendly fire between teammates, but your own grenade can still kill you.
-      if (!self && isTeamMode(this.mode) && victim.team === gd.ownerTeam) continue
+      if (!this.hostileTo(gd, victim)) continue
       const chest = chestPoint(victim.x, victim.y, victim.z, stanceOf(victim), victim.yaw)
       const d = dist3(pos, chest)
       if (d >= radius) continue
+      let scale = 1 - d / radius
+      if (claymore) {
+        // A claymore throws its steel forward: full force in its cone, little behind it.
+        const flat = Math.hypot(chest[0] - pos[0], chest[2] - pos[2]) || 1
+        const inFront = Math.acos(Math.max(-1, Math.min(1, ((chest[0] - pos[0]) * fx + (chest[2] - pos[2]) * fz) / flat))) <= EQUIPMENT.claymore.cone * 1.35
+        if (!inFront && d > EQUIPMENT.claymore.nearRadius) continue
+        scale = d < 2.5 ? 1 : 1 - (d - 2.5) / (radius - 2.5)
+        if (!inFront) scale *= 0.45
+      }
       const exposed =
         this.mapWorld.clearLine(lift, chest, 0.1) ||
         this.mapWorld.clearLine(lift, headPoint(victim.x, victim.y, victim.z, stanceOf(victim), victim.yaw), 0.1) ||
         this.mapWorld.clearLine(lift, [victim.x, victim.y + 0.3, victim.z], 0.1)
       if (!exposed) continue
-      // Your own rocket still hurts, but a near miss on a wall shouldn't one-shot you.
-      const scale = self && gd.kind === 'rocket' ? 0.5 : 1
-      this.applyDamage(victim, damage * (1 - d / radius) * scale, owner, weaponId, { from: [pos[0], pos[2]] })
+      // Your own rocket or claymore still hurts, but a near miss shouldn't one-shot you.
+      if (self && (gd.kind === 'rocket' || claymore)) scale *= 0.5
+      this.applyDamage(victim, damage * scale, owner, weaponId, { from: [pos[0], pos[2]] })
+    }
+    // A blast sets off charges lying close by (theirs and yours alike).
+    for (const [id, other] of this.grenadeBodies) {
+      if (other.kind !== 'c4' && other.kind !== 'claymore' && other.kind !== 'semtex') continue
+      const at = this.chargePos(other)
+      if (dist3(at, pos) > 2.6) continue
+      this.removeGrenade(id)
+      this.detonate(other, at)
     }
   }
 
@@ -1301,7 +1530,7 @@ export class DustlineRoom extends Room {
         const w = this.weaponOf(meta, id)
         ammo.reserve = Math.min(w.reserve, ammo.reserve + w.magSize * 2)
       }
-      meta.lethal = Math.min(EQUIPMENT.frag.maxCount, meta.lethal + 1)
+      meta.lethal = Math.min(EQUIPMENT[meta.activeClass.lethal].maxCount, meta.lethal + 1)
       this.state.pickups.delete(a.id)
       this.pickupExpiry.delete(a.id)
       meta.client?.send('ammo', { ammo: this.ammoPayload(meta), msg: 'AMMO PICKED UP' })
@@ -1311,7 +1540,7 @@ export class DustlineRoom extends Room {
     if (crate && now >= meta.ammoCrateAt) {
       meta.ammoCrateAt = now + crate.cooldown * 1000
       for (const [id, ammo] of Object.entries(meta.ammo)) ammo.reserve = this.weaponOf(meta, id).reserve
-      meta.lethal = EQUIPMENT.frag.count
+      meta.lethal = Math.max(meta.lethal, EQUIPMENT[meta.activeClass.lethal].count)
       meta.tactical = EQUIPMENT[meta.activeClass.tactical].count
       meta.client?.send('ammo', { ammo: this.ammoPayload(meta), msg: 'RESUPPLIED' })
     }

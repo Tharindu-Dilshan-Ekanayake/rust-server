@@ -54,6 +54,10 @@ export const GrenadeState = schema(
     x: t.float32(),
     y: t.float32(),
     z: t.float32(),
+    /** Placed charges: which way a claymore faces; a C4 brick's turn where it lies. */
+    yaw: t.float32(),
+    /** Stuck to a wall, the floor or a player (it stops tumbling). */
+    stuck: t.boolean(),
   },
   'GrenadeState',
 )
