@@ -11,7 +11,7 @@
 import { eyeHeightFor, PLAYER, ROUND, SND, stanceOf, WALK_GROUPS } from '../shared/constants.js'
 import { chestPoint, headPoint } from '../shared/hitbox.js'
 import { angleDelta, clamp } from '../shared/math.js'
-import { effectiveWeapon, EQUIPMENT, WEAPONS } from '../shared/weapons.js'
+import { cycleTime, effectiveWeapon, EQUIPMENT, WEAPONS } from '../shared/weapons.js'
 import { findPath, nearestNode } from './physics.js'
 
 export const BOT_NAMES = [
@@ -324,7 +324,7 @@ function planPath(room, p, meta, now) {
   }
   if (goal < 0) {
     // Snipers like to perch on the tanks half the time.
-    const wantHigh = meta.activeClass?.primary === 'sniper' && Math.random() < 0.5
+    const wantHigh = WEAPONS[meta.activeClass?.primary]?.category === 'sniper' && Math.random() < 0.5
     const pool = graph.nodes
       .map((_n, i) => i)
       .filter((i) => (wantHigh ? graph.nodes[i][1] > 1 : graph.nodes[i][1] <= 1))
@@ -422,7 +422,7 @@ export function tickBot(room, p, meta, dt, now) {
     // Search & Destroy: the job comes first; it keeps shooting on the move.
     followingPath = true
   } else if (targetAlive && b.hasLine) {
-    const chase = weapon.id === 'ar' && targetDist > 26
+    const chase = weapon.category === 'ar' && targetDist > 26
     const close = targetDist < 2.6
     if (close) {
       // Knife range: close the last bit.
@@ -430,7 +430,7 @@ export function tickBot(room, p, meta, dt, now) {
       moveZ = target.z - p.z
     } else if (chase) {
       followingPath = true
-    } else if (p.y < 1 && weapon.id !== 'sniper') {
+    } else if (p.y < 1 && weapon.category !== 'sniper') {
       if (now >= b.strafeUntil) {
         const r = Math.random()
         b.strafeDir = r < 0.2 ? 0 : r < 0.6 ? -1 : 1
@@ -550,7 +550,7 @@ export function tickBot(room, p, meta, dt, now) {
 
   let pHit
   let headChance
-  if (weapon.id === 'sniper') {
+  if (weapon.category === 'sniper') {
     b.nextShotAt = now + TUNING.sniperGap + Math.random() * TUNING.sniperGapRandom
     pHit = TUNING.sniperHit
     headChance = TUNING.sniperHead
@@ -558,7 +558,7 @@ export function tickBot(room, p, meta, dt, now) {
     if (b.burst <= 0) b.burst = TUNING.burstMin + Math.floor(Math.random() * TUNING.burstRange)
     b.burst -= 1
     const pause = b.burst === 0 ? TUNING.burstPause + Math.random() * TUNING.burstPauseRandom : 0
-    b.nextShotAt = now + weapon.fireInterval * 1000 * TUNING.fireSlow + pause
+    b.nextShotAt = now + cycleTime(weapon) * 1000 * TUNING.fireSlow + pause
     pHit = clamp(TUNING.hitNear - targetDist * TUNING.hitPerMetre, TUNING.hitFar, TUNING.hitNear)
     headChance = TUNING.headChance
   }
