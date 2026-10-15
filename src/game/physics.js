@@ -189,7 +189,8 @@ function corridorClear(mapWorld, a, b) {
  * floor is near ground level and a bot fits; hand-placed extras fill doorways and
  * narrow gaps. Ground nodes link to their neighbours when a bot-wide corridor is
  * clear and the climb between them is small (0.4 m; between grid nodes on a map
- * whose ground slopes, `nav.climb` per metre). Elevated routes (stairs, tank
+ * whose ground slopes, `nav.climb` per metre, and with `nav.steep` the ground
+ * along the way never rising faster than that per metre). Elevated routes (stairs, tank
  * tops, ramps) come from the map's chains; with `linkUpper`, raised points
  * (upstairs rooms, roofs) also link to each other wherever a bot can walk
  * between them, like the ground does.
@@ -214,11 +215,15 @@ export function getNavGraph(mapWorld) {
   }
 
   // `depth`: how far below 1.7 m to look for floor (more for sunken ground, a creek bed).
-  const { spacing, half, depth = 3 } = nav.grid
+  // `floorAt(x, z)`: on hilly ground, the ground's own height there (null to skip the
+  // spot), so the grid looks from just over it and finds rock tops and gully beds alike.
+  const { spacing, half, depth = 3, floorAt } = nav.grid
   for (let x = -half; x <= half + 1e-6; x += spacing) {
     for (let z = -half; z <= half + 1e-6; z += spacing) {
-      const floor = mapWorld.groundY(x, 1.7, z, depth)
-      if (floor === null || floor > 0.5) continue
+      const base = floorAt ? floorAt(x, z) : 0
+      if (base === null) continue
+      const floor = mapWorld.groundY(x, base + 1.7, z, depth)
+      if (floor === null || floor > base + 0.5) continue
       if (standable(mapWorld, x, floor, z)) addNode([x, floor, z], 'grid')
     }
   }
@@ -233,6 +238,24 @@ export function getNavGraph(mapWorld) {
   }
   for (const p of nav.upper ?? []) addNode([...p], 'elevated')
 
+  /**
+   * On hilly ground: true if the ground between two grid nodes never rises or
+   * falls faster than `nav.steep` per metre (sampled every half metre), so no
+   * link climbs a sheer face that happens to lie between two easy heights.
+   */
+  const gentle = (a, b) => {
+    const d = Math.hypot(b[0] - a[0], b[2] - a[2])
+    const n = Math.max(1, Math.ceil(d / 0.5))
+    let prev = a[1]
+    for (let k = 1; k <= n; k++) {
+      const t = k / n
+      const y = k === n ? b[1] : floorAt(a[0] + (b[0] - a[0]) * t, a[2] + (b[2] - a[2]) * t)
+      if (y === null || Math.abs(y - prev) > (d / n) * nav.steep) return false
+      prev = y
+    }
+    return true
+  }
+
   // Ground links: grid neighbours (incl. diagonals) and anything near an extra.
   const ground = nodes.map((_, i) => i).filter((i) => kinds[i] !== 'elevated')
   const reachGrid = spacing * 1.5
@@ -245,6 +268,7 @@ export function getNavGraph(mapWorld) {
       const d = Math.hypot(nodes[i][0] - nodes[j][0], nodes[i][2] - nodes[j][2])
       const climb = grid && nav.climb ? Math.max(0.4, d * nav.climb) : 0.4
       if (d > reach || Math.abs(nodes[i][1] - nodes[j][1]) > climb) continue
+      if (grid && floorAt && nav.steep && !gentle(nodes[i], nodes[j])) continue
       if (corridorClear(mapWorld, nodes[i], nodes[j])) link(i, j)
     }
   }

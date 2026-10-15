@@ -10,6 +10,7 @@ import * as bramble from './mapBramble.js'
 import * as hollow from './mapHollow.js'
 import * as palmwood from './mapPalmwood.js'
 import * as quarter from './mapQuarter.js'
+import * as pinecrest from './mapPinecrest.js'
 import * as terminal from './mapTerminal.js'
 
 export const MAPS = Object.freeze({
@@ -138,6 +139,28 @@ export const MAPS = Object.freeze({
     // Attackers from the west; sites in the corner of the field and the yard of the brick house on the road.
     snd: { attack: 'alpha', sites: [{ id: 'A', p: [16.0, 0, -28.0] }, { id: 'B', p: [18.6, 0, 26.0] }] },
   }),
+  pinecrest: Object.freeze({
+    id: 'pinecrest',
+    name: pinecrest.PINECREST_NAME,
+    short: 'Pinecrest',
+    tagline: 'A timber lodge in the mountains in autumn',
+    blurb: 'A lodge over a creek, a lake and its boathouse, a glasshouse, granite outcrops and a power substation, in birch and pine woods turning gold. Drop into the gully, climb the rocks, or fight through the lodge.',
+    size: '100 × 100 m',
+    isNew: true,
+    half: pinecrest.PINECREST_HALF,
+    entities: pinecrest.PINECREST_ENTITIES,
+    colliders: pinecrest.buildPinecrestColliders,
+    glass: pinecrest.PINECREST_GLASS,
+    ladders: pinecrest.PINECREST_LADDERS,
+    ladderAt: pinecrest.pinecrestLadderAt,
+    spawns: pinecrest.PINECREST_SPAWNS,
+    ammoCrates: pinecrest.PINECREST_AMMO,
+    nav: pinecrest.PINECREST_NAV,
+    killY: -12,
+    maxY: 26,
+    // Attackers from the north woods; site A in the lodge, B in the glasshouse.
+    snd: { attack: 'alpha', sites: [{ id: 'A', p: [-3.0, 0, 29.0] }, { id: 'B', p: [22.0, 0, 20.0] }] },
+  }),
   terminal: Object.freeze({
     id: 'terminal',
     name: terminal.TERMINAL_NAME,
@@ -145,7 +168,6 @@ export const MAPS = Object.freeze({
     tagline: 'A shelled airport terminal and the jets on its apron',
     blurb: 'A battle-scarred, L-shaped airport terminal and the wide-body jet parked nose-in at its gate, a crashed airliner burning on the apron. Walk the jet bridge into the cabin, slide out onto the apron, climb the fallen floor in the pier, or fight through the hall, the shops and the lounges behind the shot-out glass.',
     size: '112 × 112 m',
-    isNew: true,
     half: terminal.TERMINAL_HALF,
     entities: terminal.TERMINAL_ENTITIES,
     colliders: terminal.buildTerminalColliders,
@@ -164,7 +186,7 @@ export const MAPS = Object.freeze({
 })
 
 /** Order maps are listed in the menus. */
-export const MAP_IDS = Object.freeze(['terminal', 'bramble', 'quarter', 'hollow', 'palmwood', 'acres', 'dustline'])
+export const MAP_IDS = Object.freeze(['pinecrest', 'terminal', 'bramble', 'quarter', 'hollow', 'palmwood', 'acres', 'dustline'])
 /** What a new player starts on. */
 export const DEFAULT_MAP = 'acres'
 /** What a room opens on when the client didn't say (clients from before maps). */
